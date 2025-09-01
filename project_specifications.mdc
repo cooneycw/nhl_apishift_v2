@@ -1,0 +1,294 @@
+# NHL Data Retrieval System - Project Specifications
+
+## Project Overview
+
+The NHL Data Retrieval System is a Python-based application designed to responsibly collect, process, and store **regular season** NHL statistical data from official NHL API endpoints and supplementary HTML reports. The system emphasizes API safety, data integrity, modular architecture, and **exclusive focus on regular season games only**.
+
+**IMPORTANT: This system is configured to collect ONLY regular season games (gameType == 2). Preseason games (gameType == 1) and playoff games (gameType == 3) are automatically filtered out during collection.**
+
+## Technical Specifications
+
+### Programming Language & Environment
+
+**Python Version**: 3.8+
+- **Recommended**: Python 3.10 or higher for optimal performance
+- **Dependencies**: 
+  - `requests` >= 2.28.0 for HTTP requests
+  - `beautifulsoup4` >= 4.11.0 for HTML parsing
+  - `pandas` >= 1.5.0 for data manipulation
+  - `lxml` >= 4.9.0 for XML/HTML parsing
+  - Standard library: `json`, `csv`, `logging`, `concurrent.futures`, `datetime`, `pathlib`
+
+**Development Environment**:
+- **OS**: Linux (Ubuntu 20.04+), macOS, Windows 10+
+- **Python Environment**: Virtual environment (venv/conda) recommended
+- **IDE**: Any Python-compatible IDE (VS Code, PyCharm, etc.)
+
+### API Safety & Responsible Usage
+
+#### Rate Limiting Policy
+```python
+# Configuration in config/nhl_config.py
+RATE_LIMIT_SETTINGS = {
+    'request_delay': 1.0,         # 1 second minimum between requests (conservative)
+    'max_concurrent': 2,          # Maximum 2 concurrent requests (conservative)
+    'retry_backoff': 5.0,         # Exponential backoff for retries (conservative)
+    'max_retries': 3,             # Maximum retry attempts
+    'timeout': 30,                # Request timeout in seconds
+    'respect_rate_limits': True   # Honor HTTP 429 responses
+}
+```
+
+#### API Kindness Guidelines
+
+1. **Request Throttling**:
+   - Minimum 1 second delay between API requests (conservative)
+   - Maximum 2 concurrent requests to avoid overwhelming servers (conservative)
+   - Exponential backoff on HTTP 429 (Rate Limited) responses
+
+2. **Error Handling**:
+   - Graceful handling of 4xx/5xx HTTP errors
+   - Automatic retry with backoff for transient failures
+   - Comprehensive logging of failed requests without retrying indefinitely
+
+3. **Resource Conservation**:
+   - Use HTTP session pooling to reuse connections
+   - Implement proper request timeouts (30 seconds default)
+   - Cache responses when appropriate to avoid duplicate requests
+
+4. **User Agent Identification**:
+   ```
+   User-Agent: NHL-Data-Retrieval-System/1.0 (Educational/Research Purpose)
+   ```
+
+#### NHL API Endpoint Respect
+- **Official Endpoints Only**: Use documented NHL API endpoints
+- **No Scraping**: Avoid aggressive scraping of web pages
+- **HTML Reports**: Limited collection of publicly available HTML reports
+- **No Authentication Bypass**: Respect any authentication requirements
+
+### Data Storage Strategy
+
+#### Storage Format Priority
+1. **JSON** (Primary): Raw API responses for data integrity
+2. **CSV** (Export): Human-readable format for analysis
+3. **Parquet** (Optional): Compressed columnar format for large datasets
+
+#### Directory Structure
+```
+storage/
+├── json/                 # Raw JSON data from APIs
+│   ├── seasons.json     # Season information
+│   ├── teams.json       # Team data
+│   ├── games/           # Game data by season
+│   ├── boxscores/       # Boxscore data by season/game
+│   ├── playbyplay/      # Play-by-play data by season/game
+│   └── players/         # Player information by season
+├── html/                # HTML reports (when applicable)
+│   └── reports/         # Game reports by season/type
+├── csv/                 # Exported CSV files
+│   └── [season]/        # Season-specific exports
+├── processed/           # Curated/processed data
+└── logs/               # Application logs
+```
+
+#### Data Retention Policy
+- **JSON Data**: Indefinite retention for historical analysis
+- **Temporary Files**: Cleanup after 30 days
+- **Logs**: Rotate logs daily, keep 30 days
+- **Failed Requests**: Log and track for retry strategies
+
+### Code Architecture Standards
+
+#### Modular Design Principles
+```
+src/
+├── collect/            # Data collection modules
+├── curate/            # Data processing and curation
+├── model/             # Data models and schemas
+├── transform/         # Data transformation utilities
+└── utils/             # Common utilities (storage, validation)
+```
+
+#### Error Handling Strategy
+1. **Graceful Degradation**: Continue processing other data if one source fails
+2. **Comprehensive Logging**: Log all errors with context for debugging
+3. **Retry Logic**: Implement smart retry with exponential backoff
+4. **Validation**: Validate data at multiple stages of processing
+
+#### Configuration Management
+- **Environment-Specific**: Support dev/staging/production configurations
+- **Override Capability**: Allow command-line parameter overrides
+- **Validation**: Validate configuration on startup
+- **Documentation**: All configuration options clearly documented
+
+### Performance Specifications
+
+#### Memory Management
+- **Streaming Processing**: Process large datasets in chunks
+- **Memory Monitoring**: Track memory usage during processing
+- **Garbage Collection**: Explicit cleanup of large objects
+- **Batch Processing**: Process games/seasons in batches to control memory
+
+#### Execution Time Targets
+- **Season Data**: < 2 minutes for complete season collection
+- **HTML Reports**: < 5 minutes for complete season HTML collection
+- **Data Validation**: < 30 seconds for full season validation
+- **CSV Export**: < 1 minute for complete season export
+
+### Quality Assurance
+
+#### Data Validation Requirements
+1. **Schema Validation**: Ensure data matches expected structure
+2. **Completeness Checks**: Verify all expected data is present
+3. **Consistency Validation**: Check for logical consistency across datasets
+4. **Duplicate Detection**: Identify and handle duplicate records
+
+#### Testing Strategy
+- **Unit Tests**: Test individual functions and methods
+- **Integration Tests**: Test API interactions with mock responses
+- **Data Quality Tests**: Validate collected data meets quality standards
+- **Performance Tests**: Ensure performance targets are met
+
+#### Logging Requirements
+```python
+# Logging configuration
+LOGGING_CONFIG = {
+    'version': 1,
+    'formatters': {
+        'detailed': {
+            'format': '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        }
+    },
+    'handlers': {
+        'file': {
+            'class': 'logging.handlers.RotatingFileHandler',
+            'filename': 'storage/logs/nhl_retrieval.log',
+            'maxBytes': 10485760,  # 10MB
+            'backupCount': 5
+        },
+        'console': {
+            'class': 'logging.StreamHandler',
+            'formatter': 'detailed'
+        }
+    },
+    'loggers': {
+        '': {
+            'level': 'INFO',
+            'handlers': ['file', 'console']
+        }
+    }
+}
+```
+
+### Security & Privacy
+
+#### Data Handling
+- **Public Data Only**: Only collect publicly available data
+- **No Personal Information**: Avoid collecting personal player data beyond public stats
+- **Compliance**: Ensure compliance with data usage policies
+- **Attribution**: Proper attribution to NHL as data source
+
+#### API Key Management
+- **No Hardcoded Keys**: Never hardcode API keys in source code
+- **Environment Variables**: Use environment variables for sensitive data
+- **Key Rotation**: Support for API key rotation if required
+
+### Monitoring & Observability
+
+#### Health Checks
+- **API Availability**: Monitor NHL API endpoint availability
+- **Data Freshness**: Track when data was last successfully updated
+- **Error Rates**: Monitor error rates and patterns
+- **Performance Metrics**: Track execution times and resource usage
+
+#### Alerting
+- **Critical Failures**: Alert on system-wide failures
+- **Data Quality Issues**: Alert on data validation failures
+- **API Issues**: Alert on persistent API errors
+- **Performance Degradation**: Alert on significant performance issues
+
+### Deployment & Operations
+
+#### Environment Configuration
+```bash
+# Development
+export NHL_ENV=development
+export NHL_LOG_LEVEL=DEBUG
+export NHL_MAX_WORKERS=2
+
+# Production
+export NHL_ENV=production
+export NHL_LOG_LEVEL=INFO
+export NHL_MAX_WORKERS=5
+```
+
+#### Command Line Interface
+```bash
+# Full pipeline execution
+python main.py --mode full --seasons 20242025 --verbose
+
+# Individual step execution
+python main.py --mode step --step step_01_collect_json --seasons 20242025
+
+# Status checking
+python main.py --mode status --seasons 20242025
+
+# Data validation
+python main.py --mode step --step step_04_validate --seasons 20242025
+```
+
+### Ethical Guidelines
+
+#### Responsible Data Collection
+1. **Respect Terms of Service**: Comply with NHL's terms of service
+2. **Educational Purpose**: Use data for educational/research purposes
+3. **No Commercial Use**: Avoid commercial exploitation of collected data
+4. **Attribution**: Always credit NHL as the data source
+5. **Fair Use**: Collect only necessary data for intended purpose
+
+#### API Citizenship
+1. **Be Conservative**: Use lower request rates than technically possible
+2. **Monitor Impact**: Track and minimize server load impact
+3. **Respect Maintenance**: Avoid requests during known maintenance windows
+4. **Community Benefit**: Share improvements that benefit the community
+
+### Version Control & Collaboration
+
+#### Git Workflow
+- **Branch Strategy**: Feature branches for new functionality
+- **Commit Messages**: Clear, descriptive commit messages
+- **Code Reviews**: All changes require code review
+- **Documentation**: Update documentation with code changes
+
+#### Continuous Integration
+- **Automated Testing**: Run tests on all commits
+- **Code Quality**: Enforce code quality standards
+- **Security Scanning**: Scan for security vulnerabilities
+- **Dependency Updates**: Regular dependency updates
+
+## Implementation Checklist
+
+### Phase 1: Core Infrastructure
+- [ ] Implement rate limiting in data collector
+- [ ] Add proper error handling and retry logic
+- [ ] Set up comprehensive logging
+- [ ] Create configuration validation
+
+### Phase 2: Data Collection
+- [ ] Implement JSON data collection with rate limits
+- [ ] Add HTML report collection (limited scope)
+- [ ] Create data validation framework
+- [ ] Implement storage management
+
+### Phase 3: Quality & Monitoring
+- [ ] Add performance monitoring
+- [ ] Implement data quality checks
+- [ ] Create health check endpoints
+- [ ] Add alerting capabilities
+
+### Phase 4: Operations
+- [ ] Create deployment documentation
+- [ ] Add monitoring dashboards
+- [ ] Implement backup strategies
+- [ ] Create operational runbooks

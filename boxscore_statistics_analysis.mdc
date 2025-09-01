@@ -1,0 +1,271 @@
+# NHL Boxscore Statistics Analysis
+## Overview
+
+This document provides a comprehensive analysis of the statistics contained in the NHL boxscore JSON files. The analysis covers team-level, player-level, and position-level statistics, including temporal aspects such as game progress, time on ice, and shift details.
+
+## Data Structure Overview
+
+### File Organization
+- **Location**: `storage/20242025/json/boxscores/`
+- **Format**: JSON files named by game ID (e.g., `2024020991.json`)
+- **Content**: Complete game statistics including team and player performance data
+- **Temporal Coverage**: Final game statistics (completed games only)
+- **Data Reliability**: High - all files represent final, verified game results
+
+### Game Metadata
+```json
+{
+  "id": 2024020991,
+  "season": 20242025,
+  "gameType": 2,
+  "gameDate": "2025-03-06",
+  "gameState": "OFF",  // Always "OFF" for completed games
+  "periodDescriptor": {
+    "number": 3,        // Final period number
+    "periodType": "REG", // Final period type (REG/OT)
+    "maxRegulationPeriods": 3
+  },
+  "regPeriods": 3
+}
+```
+
+## Team-Level Statistics
+
+### Basic Team Information
+- **Team ID**: Unique numeric identifier
+- **Team Abbreviation**: 3-letter code (e.g., "WPG", "PHI")
+- **Team Names**: Common name, place name, full name
+- **Conference/Division**: Team organizational structure
+- **Logo URLs**: Light and dark theme logos
+
+### Game Performance Statistics
+- **Final Score**: Total goals scored
+- **Shots on Goal (SOG)**: Total shots on goal for the game
+- **Game Result**: Win/Loss/Tie (derived from score comparison)
+
+### Game Context
+- **Home/Away Designation**: Team role in the game
+- **Venue Information**: Arena name and location
+- **Game Date and Time**: UTC timestamps and timezone information
+- **TV Broadcasts**: Network information for game coverage
+
+## Player-Level Statistics
+
+### Player Identification
+- **Player ID**: Unique numeric identifier
+- **Player Name**: Full name with internationalization support
+- **Sweater Number**: Jersey number
+- **Position**: C (Center), L (Left Wing), R (Right Wing), D (Defense), G (Goalie)
+
+### Offensive Statistics
+- **Goals**: Total goals scored
+- **Assists**: Total assists recorded
+- **Points**: Goals + Assists
+- **Power Play Goals**: Goals scored on power play
+- **Shots on Goal (SOG)**: Shots that reached the goal
+- **Plus/Minus**: Goal differential while on ice
+
+### Defensive Statistics
+- **Blocked Shots**: Shots blocked by the player
+- **Hits**: Physical hits delivered
+- **Takeaways**: Successful puck takeaways
+- **Giveaways**: Unsuccessful puck possessions
+
+### Time and Usage Statistics
+- **Time on Ice (TOI)**: Total time on ice in MM:SS format
+- **Shifts**: Number of shifts taken
+- **Penalty Minutes (PIM)**: Total penalty minutes
+
+### Specialized Statistics
+- **Faceoff Winning Percentage**: Faceoff success rate (for centers)
+- **Faceoff Attempts**: Total faceoffs taken (implied from percentage)
+
+## Position-Specific Statistics
+
+### Forward Statistics (C, L, R)
+**Core Offensive Metrics:**
+- Goals, assists, points
+- Power play goals
+- Shots on goal
+- Plus/minus rating
+
+**Physical Play:**
+- Hits delivered
+- Blocked shots
+- Takeaways/giveaways
+
+**Time Management:**
+- Time on ice (total)
+- Number of shifts
+- Faceoff performance (centers only)
+
+**Specialized Metrics:**
+- Faceoff winning percentage (centers)
+- Power play time (derived from goals)
+
+### Defenseman Statistics (D)
+**Core Performance:**
+- Goals, assists, points
+- Plus/minus rating
+- Shots on goal
+
+**Defensive Play:**
+- Blocked shots (typically higher than forwards)
+- Hits delivered
+- Takeaways/giveaways
+
+**Time Management:**
+- Time on ice (typically higher than forwards)
+- Number of shifts
+- Penalty minutes
+
+### Goaltender Statistics (G)
+**Save Performance:**
+- **Saves**: Total saves made
+- **Shots Against**: Total shots faced
+- **Save Percentage**: Saves / Shots Against
+- **Goals Against**: Total goals allowed
+
+**Situational Performance:**
+- **Even Strength Shots Against**: Format "saves/shots" (e.g., "18/19")
+- **Power Play Shots Against**: Format "saves/shots" (e.g., "2/2")
+- **Shorthanded Shots Against**: Format "saves/shots" (e.g., "1/1")
+
+**Goals Against Breakdown:**
+- **Even Strength Goals Against**: Goals allowed at even strength
+- **Power Play Goals Against**: Goals allowed on power play
+- **Shorthanded Goals Against**: Goals allowed while short-handed
+
+**Game Context:**
+- **Starter**: Boolean indicating if goalie started the game
+- **Decision**: W (Win), L (Loss), or null
+- **Time on Ice**: Total time in net
+
+## Temporal Aspects
+
+### Game Progress Information
+- **Game State**: "OFF" (final) - All boxscore files represent completed games
+- **Period Information**: Final period number and type (REG, OT)
+- **Clock Status**: "00:00" time remaining, game completed
+
+### Period Types Observed
+- **REG**: Regular period (1st, 2nd, 3rd) - Regulation games
+- **OT**: Overtime period (4th period in overtime games) - Overtime games
+- **SO**: Shootout (not observed in current data) - Shootout games
+
+### Time on Ice Analysis
+- **Format**: MM:SS (e.g., "14:07", "20:11")
+- **Total Game Time**: Sum of all player time on ice
+- **Shift Distribution**: Number of shifts indicates rest patterns
+- **Position Variations**: 
+  - Forwards: Typically 10-20 minutes
+  - Defensemen: Typically 15-25 minutes
+  - Goalies: Full game or 0 minutes (backup)
+
+## Data Quality Observations
+
+### Completeness
+- **Required Fields**: All core statistics present
+- **Optional Fields**: Some players may have null values for certain stats
+- **Position-Specific**: Faceoff stats only for centers, goalie stats only for goalies
+
+### Consistency
+- **Time Format**: Consistent MM:SS format for time on ice
+- **Percentage Format**: Decimal format (e.g., 0.5 for 50%)
+- **ID Consistency**: Player and team IDs consistent across files
+
+### Data Validation Rules
+- **Logical Relationships**: Goals + Assists = Points
+- **Time Validation**: TOI should be reasonable for position
+- **Percentage Validation**: Faceoff percentage between 0.0 and 1.0
+
+## Statistical Categories for Analysis
+
+### High Priority Statistics
+1. **Core Performance**
+   - Goals, assists, points
+   - Time on ice
+   - Shots on goal
+
+2. **Game Outcomes**
+   - Final scores
+   - Win/loss decisions
+   - Team performance
+
+3. **Position-Specific Metrics**
+   - Faceoff percentage (centers)
+   - Save percentage (goalies)
+   - Blocked shots (defensemen)
+
+### Medium Priority Statistics
+1. **Advanced Metrics**
+   - Plus/minus rating
+   - Power play performance
+   - Physical play statistics
+
+2. **Time Analysis**
+   - Shift patterns
+   - Ice time distribution
+   - Rest management
+
+### Low Priority Statistics
+1. **Specialized Data**
+   - TV broadcast information
+   - Venue details
+   - Internationalization data
+
+## Reconciliation Points
+
+### Cross-Source Validation
+- **Team IDs**: Should match teams.json
+- **Player IDs**: Should be consistent across games
+- **Game IDs**: Should match games.json schedule
+
+### Statistical Validation
+- **Team Totals**: Sum of player stats should match team totals
+- **Game Totals**: Home + Away goals should equal total goals
+- **Time Validation**: Player TOI should be reasonable for game duration
+
+### Quality Indicators
+- **Completeness**: All expected fields present
+- **Consistency**: Logical relationships maintained
+- **Accuracy**: Values within expected ranges
+
+## Implementation Considerations
+
+### Data Processing
+- **JSON Parsing**: Straightforward structure, easy to parse
+- **Time Conversion**: Convert MM:SS to seconds for calculations
+- **Position Filtering**: Separate statistics by position for analysis
+
+### Storage Optimization
+- **Normalized Structure**: Separate team, player, and game data
+- **Indexing**: Index by game ID, team ID, player ID
+- **Aggregation**: Pre-calculate team totals and averages
+
+### Analysis Capabilities
+- **Player Performance**: Individual and comparative analysis
+- **Team Performance**: Game and season-level statistics
+- **Position Analysis**: Role-specific performance metrics
+- **Temporal Analysis**: Game progression and time management
+
+## Next Steps
+
+### Immediate Actions
+1. **Data Extraction**: Parse all boxscore files
+2. **Schema Definition**: Define database schema for boxscore data
+3. **Quality Assessment**: Validate data completeness and accuracy
+
+### Short-term Goals
+1. **Team Statistics**: Aggregate team-level performance metrics
+2. **Player Statistics**: Create player performance database
+3. **Position Analysis**: Develop position-specific analytics
+
+### Long-term Vision
+1. **Advanced Analytics**: Develop derived statistics and metrics
+2. **Trend Analysis**: Track performance over time
+3. **Predictive Modeling**: Use boxscore data for predictions
+description:
+globs:
+alwaysApply: true
+---

@@ -1,0 +1,327 @@
+# NHL Statistics of Interest
+## Overview
+
+This document catalogs and categorizes the key statistics available in the NHL data that are of interest for analysis, research, and insights generation. The statistics are organized by entity type and complexity level.
+
+## Core Game Statistics
+
+### Basic Game Metrics
+- **Game Results**
+  - Final score (home/away goals)
+  - Game state (final, live, scheduled)
+  - Game type (regular season, playoffs, preseason)
+  - Venue and attendance
+  - Game duration and periods played
+
+- **Team Performance**
+  - Goals for/against
+  - Shots on goal (SOG)
+  - Power play goals and attempts
+  - Penalty minutes (PIM)
+  - Hits and blocked shots
+  - Faceoff wins and attempts
+
+### Advanced Game Metrics
+- **Possession Metrics**
+  - Time of possession
+  - Zone time (offensive/defensive/neutral)
+  - Shot attempts (Corsi)
+  - Unblocked shot attempts (Fenwick)
+
+- **Special Teams**
+  - Power play efficiency
+  - Penalty kill efficiency
+  - Power play opportunities
+  - Short-handed goals
+
+## Player Statistics
+
+### Basic Player Stats
+- **Offensive Production**
+  - Goals, assists, points
+  - Plus/minus rating
+  - Shooting percentage
+  - Game-winning goals
+
+- **Physical Play**
+  - Hits delivered
+  - Penalty minutes
+  - Blocked shots
+  - Takeaways/giveaways
+
+### Advanced Player Metrics
+- **Time on Ice**
+  - Total time on ice
+  - Average time per game
+  - Power play time
+  - Penalty kill time
+  - Even strength time
+
+- **Performance Indicators**
+  - Points per game
+  - Goals per game
+  - Assists per game
+  - Shooting percentage
+  - Faceoff percentage (for centers)
+
+### Position-Specific Stats
+- **Forwards**
+  - Goals, assists, points
+  - Shooting metrics
+  - Faceoff performance (centers)
+
+- **Defensemen**
+  - Goals, assists, points
+  - Blocked shots
+  - Plus/minus
+  - Time on ice
+
+- **Goaltenders**
+  - Wins, losses, ties
+  - Goals against average (GAA)
+  - Save percentage
+  - Shutouts
+  - Saves and shots against
+
+## Team Statistics
+
+### Season Performance
+- **Standings**
+  - Wins, losses, ties
+  - Points and point percentage
+  - Goals for/against
+  - Goal differential
+
+- **Advanced Metrics**
+  - Corsi for percentage
+  - Fenwick for percentage
+  - PDO (shooting percentage + save percentage)
+  - Expected goals (xG)
+
+### Special Teams Performance
+- **Power Play**
+  - Power play percentage
+  - Power play goals
+  - Power play opportunities
+  - Power play time
+
+- **Penalty Kill**
+  - Penalty kill percentage
+  - Goals against on penalty kill
+  - Short-handed goals for
+  - Penalty kill time
+
+## Event-Level Statistics
+
+### Play-by-Play Events
+- **Goal Events**
+  - Goal scorer and assists
+  - Goal type (even strength, power play, short-handed)
+  - Time of goal
+  - Period and game situation
+
+- **Penalty Events**
+  - Penalty type and duration
+  - Player penalized
+  - Time of penalty
+  - Resulting power play
+
+- **Other Events**
+  - Faceoffs (winner, location)
+  - Shots (type, result)
+  - Hits and blocks
+  - Zone entries/exits
+
+### Shift Data
+- **Player Shifts**
+  - Shift start/end times
+  - Duration of shifts
+  - Players on ice
+  - Game situation during shift
+
+## Derived Statistics
+
+### Advanced Analytics
+- **Possession Metrics**
+  - Corsi (shot attempts for/against)
+  - Fenwick (unblocked shot attempts)
+  - Zone time percentages
+
+- **Quality Metrics**
+  - Expected goals (xG)
+  - High-danger scoring chances
+  - Scoring chance percentage
+
+- **Efficiency Metrics**
+  - Points per 60 minutes
+  - Goals per 60 minutes
+  - Shooting percentage
+  - Save percentage
+
+### Composite Indices
+- **Player Performance**
+  - Player efficiency rating
+  - Value over replacement player (VORP)
+  - Wins above replacement (WAR)
+
+- **Team Performance**
+  - Team strength index
+  - Offensive/defensive efficiency
+  - Special teams efficiency
+
+## Contextual Statistics
+
+### Game Context
+- **Situation Analysis**
+  - Score situation (leading, trailing, tied)
+  - Time remaining
+  - Period-specific performance
+  - Home/away performance
+
+- **Opponent Quality**
+  - Opponent strength
+  - Head-to-head performance
+  - Conference/division performance
+
+### Season Context
+- **Trend Analysis**
+  - Performance over time
+  - Streak analysis
+  - Month-by-month performance
+  - Pre/post trade deadline
+
+- **Comparative Analysis**
+  - League rankings
+  - Conference rankings
+  - Division rankings
+  - Historical comparisons
+
+## Data Quality Indicators
+
+### Completeness Metrics
+- **Data Coverage**
+  - Percentage of games with complete data
+  - Missing player statistics
+  - Incomplete event data
+
+- **Timeliness**
+  - Data update frequency
+  - Lag between game and data availability
+  - Real-time vs. post-game data
+
+### Accuracy Metrics
+- **Validation Checks**
+  - Cross-source verification
+  - Logical consistency checks
+  - Range validation
+
+- **Error Rates**
+  - Known data errors
+  - Correction frequency
+  - Data quality scores
+
+## Priority Statistics for Analysis
+
+### High Priority (Core Metrics)
+1. **Game Results**
+   - Final scores and outcomes
+   - Basic team statistics
+   - Player scoring statistics
+
+2. **Time on Ice**
+   - Player ice time
+   - Special teams time
+   - Shift data
+
+3. **Special Teams**
+   - Power play and penalty kill efficiency
+   - Special teams opportunities
+
+### Medium Priority (Advanced Metrics)
+1. **Possession Metrics**
+   - Corsi and Fenwick
+   - Zone time data
+   - Shot attempt data
+
+2. **Event-Level Data**
+   - Play-by-play events
+   - Faceoff data
+   - Hit and block data
+
+3. **Derived Statistics**
+   - Per-60 metrics
+   - Efficiency ratings
+   - Quality indicators
+
+### Low Priority (Specialized Metrics)
+1. **Advanced Analytics**
+   - Expected goals
+   - Player efficiency ratings
+   - Composite indices
+
+2. **Contextual Analysis**
+   - Situation-specific performance
+   - Trend analysis
+   - Comparative metrics
+
+## Data Source Mapping
+
+### JSON Sources
+- **teams.json**: Team metadata and basic information
+- **games.json**: Game schedule and basic results
+- **boxscores/**: Detailed game and player statistics
+  - **Team Level**: Final scores, shots on goal, game context
+  - **Player Level**: Goals, assists, points, time on ice, shifts, plus/minus
+  - **Position Level**: Position-specific stats (faceoffs for centers, saves for goalies)
+  - **Temporal**: Game state, period information, time on ice in MM:SS format
+- **playbyplay/**: Event-level game data
+
+### HTML Sources
+- **GS/ (Game Summary)**: Comprehensive game statistics
+- **ES/ (Event Summary)**: Detailed event breakdowns
+- **PL/ (Play-by-Play)**: Minute-by-minute game events
+- **FC/ (Faceoff Comparison)**: Faceoff statistics
+- **TH/TV/ (Time on Ice)**: Player ice time data
+
+### Derived Sources
+- **Calculated Metrics**: Advanced statistics derived from raw data
+- **Aggregated Data**: Season and career totals
+- **Comparative Data**: League rankings and percentiles
+
+## Implementation Considerations
+
+### Data Processing Requirements
+- **Parsing Complexity**: JSON data is easier to process than HTML
+- **Data Volume**: Consider processing time for large datasets
+- **Update Frequency**: Real-time vs. batch processing needs
+
+### Quality Assurance
+- **Cross-Validation**: Verify statistics across multiple sources
+- **Range Checking**: Validate statistical values against known limits
+- **Consistency Checks**: Ensure logical relationships between metrics
+
+### Performance Optimization
+- **Indexing**: Optimize data structures for fast retrieval
+- **Caching**: Cache frequently accessed statistics
+- **Compression**: Balance storage efficiency with access speed
+
+## Future Enhancements
+
+### Potential New Statistics
+- **Advanced Analytics**: Machine learning-based predictions
+- **Real-Time Metrics**: Live game statistics
+- **Historical Comparisons**: Long-term trend analysis
+
+### Data Integration
+- **External Sources**: Weather, injury, and transaction data
+- **Social Media**: Fan sentiment and engagement metrics
+- **Video Analysis**: Player tracking and movement data
+
+### Visualization and Reporting
+- **Interactive Dashboards**: Real-time statistical displays
+- **Automated Reports**: Scheduled statistical summaries
+- **Custom Analytics**: User-defined statistical combinations
+description:
+globs:
+alwaysApply: true
+---
