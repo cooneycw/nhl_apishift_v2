@@ -165,12 +165,10 @@ class NHLConfig:
         )
     
     def create_storage_directories(self) -> None:
-        """Create core storage directories (season-specific JSON dirs are created lazily)."""
-        # Only create stable, non-season directories here
+        """Create core storage directories (season-specific dirs are created lazily)."""
+        # Only create truly stable, non-season directories here
         stable_dirs = [
             self.storage_root,
-            self.file_paths["html_reports"],
-            self.file_paths["csv_exports"],
             self.file_paths["processed"],
             self.file_paths["logs"],
         ]
@@ -204,8 +202,10 @@ class NHLConfig:
             File path for the HTML report
         """
         return os.path.join(
-            self.file_paths["html_reports"],
+            self.storage_root,
             season,
+            "html",
+            "reports",
             report_type,
             f"{report_type}{game_id}.HTM"
         )

@@ -37,9 +37,9 @@ class CSVStorageManager:
         self.config = config
         self.logger = logging.getLogger('CSVStorage')
         
-        # Define storage directory structure
-        self.base_storage_path = Path("storage/csv")
-        self.html_storage_path = Path("storage/html_reports")
+        # Define season-centric storage directory structure roots (actual season dirs created lazily)
+        self.base_storage_path = Path("storage")  # we'll always prefix with season/json or season/csv
+        self.html_storage_path = Path("storage")
         
         # Create directory structure
         self._create_storage_directories()
@@ -84,31 +84,8 @@ class CSVStorageManager:
     
     def _create_storage_directories(self):
         """Create the complete directory structure for data storage."""
-        directories = [
-            # CSV directories
-            self.base_storage_path / "seasons",
-            self.base_storage_path / "teams",
-            self.base_storage_path / "games",
-            self.base_storage_path / "players",
-            self.base_storage_path / "events",
-            self.base_storage_path / "statistics",
-            self.base_storage_path / "curated",
-            
-            # HTML report directories
-            self.html_storage_path / "game_summaries",
-            self.html_storage_path / "event_summaries",
-            self.html_storage_path / "play_by_play",
-            self.html_storage_path / "faceoff_data",
-            self.html_storage_path / "rosters",
-            self.html_storage_path / "shot_data",
-            self.html_storage_path / "time_on_ice",
-            
-
-        ]
-        
-        for directory in directories:
-            directory.mkdir(parents=True, exist_ok=True)
-            self.logger.debug(f"Created directory: {directory}")
+        # Only ensure the top-level storage root exists here; season paths are created when saving
+        Path("storage").mkdir(parents=True, exist_ok=True)
     
     def save_seasons_data(self, seasons_data: List[Dict[str, Any]]) -> None:
         """Save seasons data to CSV files."""
