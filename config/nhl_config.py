@@ -50,6 +50,7 @@ class NHLConfig:
             "standings": "{base_url}/v1/standings/now",
             "schedule": "{base_url}/v1/club-schedule-season/{team}/{season}",
             "boxscore": "{base_url}/v1/gamecenter/{game_id}/boxscore",
+            "gamecenter_landing": "{base_url}/v1/gamecenter/{game_id}/landing",
             "right_rail": "{base_url}/v1/gamecenter/{game_id}/right-rail",
             "player": "{base_url}/v1/player/{player_id}/landing",
             "roster": "{base_url}/v1/roster/{team}/current",
@@ -93,6 +94,7 @@ class NHLConfig:
             "teams": os.path.join(self.storage_root, "json", "teams.json"),
             "games": os.path.join(self.storage_root, "json", "games"),
             "boxscores": os.path.join(self.storage_root, "json", "boxscores"),
+            "gamecenter_landing": os.path.join(self.storage_root, "json", "gamecenter_landing"),
             "players": os.path.join(self.storage_root, "json", "players"),
             "playbyplay": os.path.join(self.storage_root, "json", "playbyplay"),
             # Shiftcharts uses season-first structure; avoid creating a conflicting json/shiftcharts root
@@ -143,6 +145,10 @@ class NHLConfig:
             'shift_stats': [
                 'total_shifts', 'total_time_on_ice', 'average_shift_length', 'longest_shift',
                 'shortest_shift', 'goals', 'assists', 'penalties', 'faceoffs_won', 'faceoffs_lost'
+            ],
+            'gamecenter_stats': [
+                'game_state', 'period_descriptor', 'scoring_summary', 'penalties_summary',
+                'three_stars', 'tv_broadcasts', 'venue_info', 'shootout_data'
             ]
         }
     
@@ -239,6 +245,25 @@ class NHLConfig:
             "json",
             "shiftcharts",
             f"shiftchart_{game_id}.json"
+        )
+    
+    def get_gamecenter_landing_file_path(self, season: str, game_id: int) -> str:
+        """
+        Get file path for gamecenter landing JSON data.
+        
+        Args:
+            season: Season identifier
+            game_id: Game ID
+            
+        Returns:
+            File path for the gamecenter landing JSON file
+        """
+        return os.path.join(
+            self.storage_root,
+            season,
+            "json",
+            "gamecenter_landing",
+            f"gamecenter_landing_{game_id}.json"
         )
     
     def get_recent_seasons(self, count: int = None) -> List[str]:

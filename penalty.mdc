@@ -1,0 +1,349 @@
+# NHL Penalty and Goal Data Analysis and Coding Standards
+
+## Overview
+
+This document analyzes how different NHL HTML report types define and code penalties and goals, with a focus on understanding which penalty types lead to power plays, how goal data is structured across various report formats, and data reconciliation between sources.
+
+## Report Types and Data Structure
+
+### Goal Data Reconciliation
+
+#### Authoritative Goal Sources
+1. **Game Summary (GS) Reports** - Primary source for goal data
+2. **Reference JSON Data** - Official NHL API data
+3. **Time on Ice (TH/TV) Reports** - Secondary source with limitations
+
+#### Goal Data Discrepancies Identified
+
+**TH/TV Report Issue**: The 'G' event marker in TH/TV reports does NOT indicate goal scorers. Instead, it marks ALL players on the ice during a goal event.
+
+**Example from Game 2024020001**:
+- **GS Report (Authoritative)**: 5 goals total (NJD: 4, BUF: 1)
+- **TH Report (Misleading)**: 29 'G' events (all home team players)
+- **Reality**: TH 'G' events represent players on ice during goals, not goal scorers
+
+**Correct Interpretation of TH/TV Events**:
+- `G` = Player was on ice during a goal (either for or against)
+- `GP` = Goalie event (goalie on ice during goal)
+- `P` = Penalty event
+- Empty = Normal shift
+
+#### Goal Data Reconciliation Process
+
+1. **Primary Source**: Use GS report scoring summary for authoritative goal data
+2. **Cross-Reference**: Verify with reference JSON data when available
+3. **TH/TV Limitation**: Do not use TH/TV 'G' events for goal scoring statistics
+4. **Validation**: Ensure goal counts match between GS and game header scores
+
+## Report Types and Penalty Data
+
+### 1. Game Summary (GS) Reports
+
+**File Pattern**: `GS{game_id}.HTM`  
+**Primary Purpose**: Complete game overview including penalty summaries
+
+#### Penalty Data Structure:
+- **Location**: Dedicated "PENALTIES" section
+- **Format**: Chronological list by period
+- **Data Fields**:
+  - Period (1, 2, 3, OT)
+  - Time (MM:SS format)
+  - Team (abbreviation)
+  - Player name and sweater number
+  - Penalty type and duration
+  - Power play situation
+
+#### Example GS Penalty Entry:
+```
+1st Period
+8:39 NJD #11 S.NOESEN - 2 min for Hooking
+```
+
+#### Power Play Indicators:
+- **Power Play Goals**: Listed in scoring summary with "PP" strength indicator
+- **Power Play Opportunities**: Team stats section shows PP attempts and goals
+- **Penalty Kill Stats**: Shows PK attempts and goals against
+
+### 2. Event Summary (ES) Reports
+
+**File Pattern**: `ES{game_id}.HTM`  
+**Primary Purpose**: Detailed player statistics including penalty counts
+
+#### Penalty Data Structure:
+- **Location**: Player statistics tables
+- **Format**: Aggregated penalty statistics per player
+- **Data Fields**:
+  - PN (Number of Penalties)
+  - PIM (Penalty Minutes)
+
+#### Example ES Penalty Data:
+```
+Player: NOESEN, STEFAN (#11)
+PN: 1 (Number of penalties)
+PIM: 2 (Penalty minutes)
+```
+
+#### Power Play Indicators:
+- **Time on Ice**: Separate columns for PP, SH, EV time
+- **Player Performance**: Shows individual PP/SH contributions
+
+### 3. Play-by-Play (PL) Reports
+
+**File Pattern**: `PL{game_id}.HTM`  
+**Primary Purpose**: Chronological event-by-event game log
+
+#### Penalty Data Structure:
+- **Location**: Event-by-event timeline
+- **Format**: Individual penalty events with context
+- **Data Fields**:
+  - Event number
+  - Period and time
+  - Team and player
+  - Penalty type and duration
+  - Game situation (score, strength)
+
+#### Example PL Penalty Entry:
+```
+Event #15
+1st Period - 8:39
+NJD #11 S.NOESEN - 2 min for Hooking
+Game Situation: 0-0, Even Strength
+```
+
+#### Power Play Indicators:
+- **Event Context**: Shows game situation before/after penalty
+- **Strength Changes**: Tracks 5v4, 4v5, 5v3, etc. situations
+- **Power Play Events**: Goals, shots, saves during PP
+
+## Penalty Types and Power Play Classification
+
+### Power Play Penalties (Lead to 5v4 or better)
+
+#### Minor Penalties (2 minutes):
+- **Hooking**: Player impedes opponent with stick
+- **Tripping**: Player causes opponent to fall
+- **Holding**: Player impedes opponent's movement
+- **Interference**: Player impedes opponent without puck
+- **Slashing**: Player strikes opponent with stick
+- **Cross-checking**: Player hits opponent with stick held in both hands
+- **Roughing**: Player engages in unnecessary physical contact
+- **Boarding**: Player pushes opponent into boards dangerously
+- **Charging**: Player takes more than 3 strides before hitting opponent
+- **Elbowing**: Player uses elbow to hit opponent
+- **High-sticking**: Player's stick contacts opponent above shoulders
+- **Delay of Game**: Player deliberately delays game (puck over glass, etc.)
+
+#### Major Penalties (5 minutes):
+- **Fighting**: Players engage in physical altercation
+- **Spearing**: Player uses stick as weapon
+- **Butt-ending**: Player uses end of stick to hit opponent
+
+### Non-Power Play Penalties (Do NOT lead to 5v4)
+
+#### Misconduct Penalties (10 minutes):
+- **Misconduct**: Player receives 10-minute penalty
+- **Game Misconduct**: Player ejected from game
+- **Match Penalty**: Player ejected for dangerous play
+
+#### Special Situations:
+- **Too Many Men**: Team has more than 6 players on ice
+- **Delay of Game (Goalie)**: Goalie freezes puck outside crease
+- **Unsportsmanlike Conduct**: Player engages in inappropriate behavior
+
+## Penalty Coding Standards
+
+### 1. Penalty Duration Codes:
+- **2 min**: Minor penalty
+- **5 min**: Major penalty  
+- **10 min**: Misconduct penalty
+- **20 min**: Game misconduct penalty
+- **25 min**: Match penalty
+
+### 2. Strength Situation Codes:
+- **EV**: Even strength (5v5)
+- **PP**: Power play (5v4, 5v3, 4v3)
+- **SH**: Short-handed (4v5, 3v5, 3v4)
+- **EN**: Empty net situations
+
+### 3. Penalty Type Abbreviations:
+- **HOOK**: Hooking
+- **TRIP**: Tripping
+- **HOLD**: Holding
+- **INT**: Interference
+- **SLASH**: Slashing
+- **CROSS**: Cross-checking
+- **ROUGH**: Roughing
+- **BOARD**: Boarding
+- **CHARGE**: Charging
+- **ELBOW**: Elbowing
+- **HIGH**: High-sticking
+- **DELAY**: Delay of game
+- **FIGHT**: Fighting
+- **SPEAR**: Spearing
+- **BUTT**: Butt-ending
+- **MISC**: Misconduct
+- **GAME**: Game misconduct
+- **MATCH**: Match penalty
+
+## Power Play Analysis Framework
+
+### 1. Penalty Classification:
+```python
+POWER_PLAY_PENALTIES = {
+    'hooking', 'tripping', 'holding', 'interference', 'slashing',
+    'cross-checking', 'roughing', 'boarding', 'charging', 'elbowing',
+    'high-sticking', 'delay-of-game'
+}
+
+NON_POWER_PLAY_PENALTIES = {
+    'fighting', 'misconduct', 'game-misconduct', 'match-penalty',
+    'too-many-men-on-the-ice', 'delay-of-game-goalie', 'unsportsmanlike-conduct'
+}
+```
+
+### 2. Power Play Situation Detection:
+- **5v4**: One minor penalty
+- **5v3**: Two minor penalties to same team
+- **4v3**: One minor penalty each team (offsetting)
+- **5v4 + 5v4**: Simultaneous penalties (delayed penalty)
+
+### 3. Power Play Duration Calculation:
+- **Minor Penalty**: 2 minutes or until goal scored
+- **Major Penalty**: Full 5 minutes regardless of goals
+- **Double Minor**: 4 minutes or until 2 goals scored
+
+## Data Reconciliation Strategy
+
+### 1. Cross-Reference Validation:
+- **GS vs PL**: Verify penalty counts and timing
+- **ES vs GS**: Validate penalty minutes and counts
+- **PL vs ES**: Confirm individual player penalty totals
+
+### 2. Power Play Validation:
+- **PP Opportunities**: Count from penalty events
+- **PP Goals**: Verify against scoring summary
+- **PP Time**: Validate against time-on-ice data
+
+### 3. Complex Scenarios:
+- **Simultaneous Penalties**: Multiple players penalized at same time
+- **Offsetting Penalties**: Both teams receive penalties
+- **Delayed Penalties**: Penalty called but play continues
+- **Penalty Shots**: Special penalty situations
+
+### 4. Time on Ice (TH/TV) Reports
+
+**File Pattern**: `TH{game_id}.HTM` (Home), `TV{game_id}.HTM` (Visitor)  
+**Primary Purpose**: Detailed shift-by-shift time on ice data
+
+#### Goal Data Structure:
+- **Location**: Individual shift events within player sections
+- **Format**: Event markers in shift data
+- **Data Fields**:
+  - Shift number, period, start/end times
+  - Event markers (G, GP, P, or empty)
+
+#### Event Marker Interpretation:
+- **G**: Player was on ice during a goal (NOT the goal scorer)
+- **GP**: Goalie was on ice during a goal
+- **P**: Player was on ice during a penalty
+- **Empty**: Normal shift with no special events
+
+#### Goal Data Limitations:
+- **DO NOT use 'G' events for goal scoring statistics**
+- **'G' events mark ALL players on ice during goals, not just scorers**
+- **Use GS reports for authoritative goal data**
+- **TH/TV useful for identifying players on ice during goals**
+
+#### Example TH Goal Event:
+```
+Shift #8, Period 1, 15:10-15:38, Duration 00:28, Event: G
+```
+*This indicates the player was on ice when a goal was scored at 15:38, not that they scored the goal.*
+
+### 5. Faceoff Summary (FS) Reports
+
+**File Pattern**: `FS{game_id}.HTM`  
+**Primary Purpose**: Detailed faceoff statistics by strength and zone
+
+#### Faceoff Strength Data Structure:
+- **Location**: Player faceoff statistics tables
+- **Format**: Faceoff data organized by strength situation
+- **Data Fields**:
+  - 5v5 (Even strength)
+  - 5v4 (Power play for faceoff team)
+  - 4v5 (Penalty kill for faceoff team)
+  - 4v4 (4-on-4 situations)
+  - TOT (Total faceoffs)
+
+#### Example FS Strength Data:
+```
+Player: HISCHIER, NICO (#13)
+5v5: 10-20/50% (Off: 1-2/50%, Def: 5-10/50%, Neu: 4-8/50%)
+5v4: 1-3/33% (Off: 1-2/50%, Def: 0-1/0%, Neu: 0-1/0%)
+4v5: 4-5/80% (Off: 0-0/0%, Def: 4-4/100%, Neu: 0-1/0%)
+TOT: 15-28/54% (Off: 2-4/50%, Def: 9-14/64%, Neu: 4-10/40%)
+```
+
+#### Power Play Reconciliation Value:
+- **Penalty Validation**: Faceoff strength data can validate penalty counts
+- **Power Play Tracking**: 5v4 and 4v5 faceoffs indicate power play situations
+- **Situation Analysis**: Compare faceoff counts with penalty data to ensure consistency
+- **Cross-Reference**: Use faceoff strength totals to verify penalty impact on game flow
+
+## Implementation Notes
+
+### 1. HTML Parsing Considerations:
+- **Table Structure**: Different report types use different table layouts
+- **Cell Positioning**: Penalty data may be in different columns
+- **Text Formatting**: Penalty descriptions may include HTML entities
+- **Team Identification**: Use team abbreviations consistently
+
+### 2. Reference Data Integration:
+- **Player Lookup**: Use sweater numbers to link to roster data
+- **Team Lookup**: Use team IDs for consistent team identification
+- **Game Context**: Use game ID for cross-referencing data
+
+### 3. Data Quality Assurance:
+- **Penalty Count Validation**: Ensure totals match across reports
+- **Time Validation**: Verify penalty times are within period bounds
+- **Player Validation**: Confirm penalized players were active in game
+- **Situation Validation**: Check power play situations are logical
+
+### 4. Cross-Report Reconciliation:
+- **Faceoff Strength Validation**: Use FS report strength data to validate penalty counts
+  - Count 5v4 faceoffs to verify power play opportunities
+  - Count 4v5 faceoffs to verify penalty kill situations
+  - Compare faceoff strength totals with penalty data for consistency
+- **Power Play Reconciliation**: 
+  - Match 5v4 faceoff counts with power play goals in GS reports
+  - Verify 4v5 faceoff counts align with penalty kill statistics
+  - Cross-reference faceoff strength data with ES penalty statistics
+
+## Future Enhancements
+
+### 1. Advanced Penalty Analysis:
+- **Penalty Trends**: Track penalty patterns by team/player
+- **Power Play Efficiency**: Calculate PP conversion rates
+- **Penalty Impact**: Measure effect of penalties on game outcome
+
+### 2. Machine Learning Applications:
+- **Penalty Prediction**: Predict likelihood of penalties
+- **Power Play Optimization**: Analyze successful PP strategies
+- **Referee Analysis**: Study penalty calling patterns
+
+### 3. Real-time Integration:
+- **Live Penalty Tracking**: Monitor penalties as they occur
+- **Power Play Alerts**: Notify when PP situations develop
+- **Statistical Updates**: Update team/player penalty statistics
+
+## Conclusion
+
+Understanding penalty data across different NHL report types requires careful analysis of each format's structure and coding standards. The key to successful reconciliation is:
+
+1. **Standardized Parsing**: Consistent extraction methods across all report types
+2. **Reference Data Integration**: Using sweater numbers and team IDs for accurate linking
+3. **Cross-Validation**: Comparing data across multiple sources for accuracy
+4. **Power Play Classification**: Properly identifying which penalties lead to power plays
+5. **Faceoff Strength Reconciliation**: Using FS report strength data (5v5, 5v4, 4v5, 4v4) to validate penalty counts and power play situations
+
+This framework provides the foundation for comprehensive penalty data analysis and reconciliation in the NHL data system, with faceoff strength data serving as a critical validation tool for penalty statistics.

@@ -23,6 +23,11 @@ from bs4 import BeautifulSoup
 from datetime import datetime
 from pathlib import Path
 import json
+import sys
+
+# Import reference data loader
+sys.path.append(str(Path(__file__).parent.parent))
+from utils.reference_data import ReferenceDataLoader
 
 
 class HTMLReportParser:
@@ -45,10 +50,17 @@ class HTMLReportParser:
     - TV: Time on Ice Comparison (placeholder)
     """
     
-    def __init__(self, config=None):
-        """Initialize the HTML penalty parser."""
+    def __init__(self, config=None, storage_path: str = "storage/20242025/json"):
+        """
+        Initialize the HTML penalty parser.
+        
+        Args:
+            config: Configuration object
+            storage_path: Path to the JSON storage directory for reference data
+        """
         self.config = config
         self.logger = logging.getLogger('HTMLPenaltyParser')
+        self.reference_data = ReferenceDataLoader(storage_path)
         
         # Penalty type mappings
         self.penalty_types = {
@@ -173,7 +185,7 @@ class HTMLReportParser:
         # Consolidate penalties from all sources
         if game_penalties['sources']:
             game_penalties['consolidated_penalties'] = self.consolidate_penalties(game_penalties['sources'])
-            game_data['complex_scenarios'] = self.detect_complex_scenarios(game_penalties['consolidated_penalties'])
+            game_penalties['complex_scenarios'] = self.detect_complex_scenarios(game_penalties['consolidated_penalties'])
         
         return game_penalties
     
@@ -195,21 +207,21 @@ class HTMLReportParser:
             soup = BeautifulSoup(content, 'html.parser')
             
             if report_type == 'GS':
-                return self.parse_game_summary_data(soup)
+                return self.parse_game_summary_data(soup, str(html_file))
             elif report_type == 'PL':
                 return self.parse_playbyplay_data(soup)
             elif report_type == 'ES':
-                return self.parse_event_summary_data(soup)
+                return self.parse_event_summary_data(soup, str(html_file))
             elif report_type == 'RO':
-                return self._parse_roster_data(soup)
+                return self._parse_roster_data(soup, str(html_file))
             elif report_type == 'SS':
                 return self.parse_shot_summary_data(soup)
             elif report_type == 'FS':
-                return self.parse_faceoff_summary_data(soup)
+                return self.parse_faceoff_summary_data(soup, str(html_file))
             elif report_type == 'FC':
                 return self.parse_faceoff_comparison_data(soup)
             elif report_type in ['TH', 'TV']:
-                return self.parse_time_on_ice_data(soup, report_type)
+                return self.parse_time_on_ice_data(soup, report_type, str(html_file))
             else:
                 return {'report_type': report_type, 'data': {}}
                 
@@ -245,12 +257,13 @@ class HTMLReportParser:
             self.logger.error(f"Error parsing {report_type} report {html_file}: {e}")
             return []
     
-    def parse_game_summary_data(self, soup: BeautifulSoup) -> Dict[str, Any]:
+    def parse_game_summary_data(self, soup: BeautifulSoup, file_path: Optional[str] = None) -> Dict[str, Any]:
         """
         Parse complete Game Summary (GS) data using BeautifulSoup with proper section structure.
         
         Args:
             soup: BeautifulSoup object of the HTML content
+            file_path: Optional file path for game ID extraction from filename
             
         Returns:
             Dictionary containing all parsed game summary data with proper structure
@@ -267,7 +280,7 @@ class HTMLReportParser:
         
         try:
             # Parse game header (teams, score, date, venue)
-            data['game_header'] = self._parse_game_header(soup)
+            data['game_header'] = self._parse_game_header(soup, file_path)
             
             # Parse scoring summary with proper goal structure
             data['scoring_summary'] = self._parse_scoring_summary(soup)
@@ -287,6 +300,365 @@ class HTMLReportParser:
             data['error'] = str(e)
         
         return data
+    
+    def _extract_game_id_from_html(self, soup: BeautifulSoup, file_path: Optional[str] = None) -> Optional[int]:
+        """Extract game ID from HTML content or filename."""
+        try:
+            # First try to extract from filename if provided
+            if file_path:
+                filename = Path(file_path).stem
+                # Pattern: GS020001 -> 2024020001
+                if filename.startswith(('GS', 'ES', 'PL', 'RO', 'SS', 'FS', 'FC', 'TH', 'TV')):
+                    game_number = filename[2:]  # Remove prefix
+                    if game_number.isdigit():
+                        # Convert to full game ID format
+                        game_id = int(f"2024{game_number}")
+                        return game_id
+            
+            # Look for game ID in various places in HTML
+            # Check title tag
+            title_tag = soup.find('title')
+            if title_tag:
+                title_text = title_tag.get_text()
+                # Look for pattern like "Game 2024020031" or similar
+                game_id_match = re.search(r'Game\s+(\d+)', title_text)
+                if game_id_match:
+                    return int(game_id_match.group(1))
+            
+            # Check for game ID in script tags or other elements
+            scripts = soup.find_all('script')
+            for script in scripts:
+                if script.string:
+                    game_id_match = re.search(r'gameId["\']?\s*[:=]\s*["\']?(\d+)', script.string)
+                    if game_id_match:
+                        return int(game_id_match.group(1))
+            
+            # Check for game ID in data attributes
+            elements_with_data = soup.find_all(attrs={'data-game-id': True})
+            for elem in elements_with_data:
+                game_id = elem.get('data-game-id')
+                if game_id and game_id.isdigit():
+                    return int(game_id)
+                    
+        except Exception as e:
+            self.logger.error(f"Error extracting game ID: {e}")
+        
+        return None
+
+    def _resolve_player_name(self, team_id: int, sweater_number: int, fallback_name: str = "") -> str:
+        """
+        Resolve player name using sweater number lookup from reference data.
+        
+        Args:
+            team_id: Team ID
+            sweater_number: Player sweater number
+            fallback_name: Fallback name if lookup fails
+            
+        Returns:
+            Resolved player name or fallback name
+        """
+        return self.reference_data.resolve_player_name(team_id, sweater_number, fallback_name)
+    
+    def _resolve_team_name(self, team_id: int, fallback_name: str = "") -> str:
+        """
+        Resolve team name using team ID lookup from reference data.
+        
+        Args:
+            team_id: Team ID
+            fallback_name: Fallback name if lookup fails
+            
+        Returns:
+            Resolved team name or fallback name
+        """
+        return self.reference_data.resolve_team_name(team_id, fallback_name)
+
+    def _parse_game_header(self, soup: BeautifulSoup, file_path: Optional[str] = None) -> Dict[str, Any]:
+        """Parse game header information including teams, scores, date, and venue."""
+        header = {
+            'visitor_team': {},
+            'home_team': {},
+            'game_info': {}
+        }
+        
+        try:
+            # Extract game ID for reference data lookup
+            game_id = self._extract_game_id_from_html(soup, file_path)
+            if game_id:
+                header['game_info']['game_id'] = game_id
+                
+                # Get game data from reference
+                game_data = self.reference_data.get_game_by_id(game_id)
+                boxscore_data = self.reference_data.get_boxscore_by_id(game_id)
+                
+                if game_data:
+                    # Use reference data for team info
+                    away_team_data = game_data.get('awayTeam', {})
+                    home_team_data = game_data.get('homeTeam', {})
+                    
+                    header['visitor_team']['id'] = away_team_data.get('id')
+                    header['visitor_team']['name'] = away_team_data.get('placeName', {}).get('default', '')
+                    header['visitor_team']['abbrev'] = away_team_data.get('abbrev', '')
+                    header['visitor_team']['score'] = away_team_data.get('score', 0)
+                    
+                    header['home_team']['id'] = home_team_data.get('id')
+                    header['home_team']['name'] = home_team_data.get('placeName', {}).get('default', '')
+                    header['home_team']['abbrev'] = home_team_data.get('abbrev', '')
+                    header['home_team']['score'] = home_team_data.get('score', 0)
+                    
+                    # Game info from reference data
+                    header['game_info']['date'] = game_data.get('gameDate', '')
+                    header['game_info']['venue'] = game_data.get('venue', {}).get('default', '')
+                    header['game_info']['start_time'] = game_data.get('startTimeUTC', '')
+                    
+                    return header
+            
+            # Fallback to HTML parsing if reference data not available
+            # Parse visitor team info
+            visitor_table = soup.find('table', {'id': 'Visitor'})
+            if visitor_table:
+                # Team name from alt attribute of logo image
+                logo_img = visitor_table.find('img')
+                if logo_img and logo_img.get('alt'):
+                    header['visitor_team']['name'] = logo_img.get('alt')
+                
+                # Score from the large font element
+                score_elem = visitor_table.find('td', style=lambda x: x and 'font-size: 40px' in x)
+                if score_elem:
+                    header['visitor_team']['score'] = int(score_elem.get_text(strip=True))
+                
+                # Team name from text content as backup
+                team_name_elem = visitor_table.find('td', string=lambda text: text and any(team in text.upper() for team in ['DEVILS', 'SABRES', 'RANGERS', 'ISLANDERS', 'FLYERS', 'PENGUINS', 'CAPITALS', 'HURRICANES', 'PANTHERS', 'LIGHTNING', 'BRUINS', 'MAPLE LEAFS', 'SENATORS', 'CANADIENS', 'RED WINGS', 'BLACKHAWKS', 'BLUE JACKETS', 'STARS', 'WILD', 'PREDATORS', 'BLUES', 'JETS', 'AVALANCHE', 'COYOTES', 'DUCKS', 'KINGS', 'SHARKS', 'GOLDEN KNIGHTS', 'FLAMES', 'OILERS', 'CANUCKS', 'KRAKEN']))
+                if team_name_elem:
+                    header['visitor_team']['name'] = team_name_elem.get_text(strip=True).split('\n')[0]
+            
+            # Parse home team info
+            home_table = soup.find('table', {'id': 'Home'})
+            if home_table:
+                # Team name from alt attribute of logo image
+                logo_img = home_table.find('img')
+                if logo_img and logo_img.get('alt'):
+                    header['home_team']['name'] = logo_img.get('alt')
+                
+                # Score from the large font element
+                score_elem = home_table.find('td', style=lambda x: x and 'font-size: 40px' in x)
+                if score_elem:
+                    header['home_team']['score'] = int(score_elem.get_text(strip=True))
+                
+                # Team name from text content as backup
+                team_name_elem = home_table.find('td', string=lambda text: text and any(team in text.upper() for team in ['DEVILS', 'SABRES', 'RANGERS', 'ISLANDERS', 'FLYERS', 'PENGUINS', 'CAPITALS', 'HURRICANES', 'PANTHERS', 'LIGHTNING', 'BRUINS', 'MAPLE LEAFS', 'SENATORS', 'CANADIENS', 'RED WINGS', 'BLACKHAWKS', 'BLUE JACKETS', 'STARS', 'WILD', 'PREDATORS', 'BLUES', 'JETS', 'AVALANCHE', 'COYOTES', 'DUCKS', 'KINGS', 'SHARKS', 'GOLDEN KNIGHTS', 'FLAMES', 'OILERS', 'CANUCKS', 'KRAKEN']))
+                if team_name_elem:
+                    header['home_team']['name'] = team_name_elem.get_text(strip=True).split('\n')[0]
+            
+            # Parse game info
+            game_info_table = soup.find('table', {'id': 'GameInfo'})
+            if game_info_table:
+                rows = game_info_table.find_all('tr')
+                for row in rows:
+                    text = row.get_text(strip=True)
+                    if 'NHL Global Series' in text or 'NHL' in text:
+                        header['game_info']['event'] = text
+                    elif any(day in text for day in ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']):
+                        header['game_info']['date'] = text
+                    elif 'Attendance' in text:
+                        header['game_info']['attendance'] = text
+                    elif 'Start' in text and 'End' in text:
+                        header['game_info']['time_info'] = text
+                    elif 'Game' in text and any(char.isdigit() for char in text):
+                        header['game_info']['game_number'] = text
+                    elif text in ['Final', 'Live', 'Scheduled']:
+                        header['game_info']['status'] = text
+                        
+        except Exception as e:
+            self.logger.error(f"Error parsing game header: {e}")
+            header['error'] = str(e)
+        
+        return header
+    
+    def _parse_scoring_summary(self, soup: BeautifulSoup) -> Dict[str, Any]:
+        """Parse scoring summary section with goals and assists."""
+        scoring = {
+            'goals': [],
+            'period_totals': {}
+        }
+        
+        try:
+            # Find the scoring summary table
+            scoring_section = soup.find('td', string='SCORING SUMMARY')
+            if scoring_section:
+                # Find the table containing goals
+                table = scoring_section.find_parent().find_next('table')
+                if table:
+                    rows = table.find_all('tr')
+                    for row in rows[1:]:  # Skip header row
+                        cells = row.find_all('td')
+                        if len(cells) >= 9:  # Ensure we have enough columns
+                            goal = {
+                                'goal_number': cells[0].get_text(strip=True),
+                                'period': cells[1].get_text(strip=True),
+                                'time': cells[2].get_text(strip=True),
+                                'strength': cells[3].get_text(strip=True),
+                                'team': cells[4].get_text(strip=True),
+                                'scorer': cells[5].get_text(strip=True),
+                                'assist1': cells[6].get_text(strip=True),
+                                'assist2': cells[7].get_text(strip=True),
+                                'visitor_on_ice': cells[8].get_text(strip=True) if len(cells) > 8 else '',
+                                'home_on_ice': cells[9].get_text(strip=True) if len(cells) > 9 else ''
+                            }
+                            scoring['goals'].append(goal)
+                            
+                            # Track period totals
+                            period = goal['period']
+                            if period not in scoring['period_totals']:
+                                scoring['period_totals'][period] = {'visitor': 0, 'home': 0}
+                            
+                            if goal['team'] == 'NJD':  # Assuming visitor team
+                                scoring['period_totals'][period]['visitor'] += 1
+                            else:
+                                scoring['period_totals'][period]['home'] += 1
+                                
+        except Exception as e:
+            self.logger.error(f"Error parsing scoring summary: {e}")
+            scoring['error'] = str(e)
+        
+        return scoring
+    
+    def _parse_penalties_section(self, soup: BeautifulSoup) -> Dict[str, Any]:
+        """Parse penalties section with detailed penalty information."""
+        penalties = {
+            'penalties': [],
+            'period_totals': {}
+        }
+        
+        try:
+            # Find penalties section
+            penalties_section = soup.find('td', string='PENALTIES')
+            if penalties_section:
+                # Find the penalties table
+                table = penalties_section.find_parent().find_next('table')
+                if table:
+                    rows = table.find_all('tr')
+                    for row in rows[1:]:  # Skip header row
+                        cells = row.find_all('td')
+                        if len(cells) >= 6:  # Ensure we have enough columns
+                            penalty = {
+                                'period': cells[0].get_text(strip=True),
+                                'time': cells[1].get_text(strip=True),
+                                'team': cells[2].get_text(strip=True),
+                                'player': cells[3].get_text(strip=True),
+                                'penalty_type': cells[4].get_text(strip=True),
+                                'duration': cells[5].get_text(strip=True)
+                            }
+                            penalties['penalties'].append(penalty)
+                            
+                            # Track period totals
+                            period = penalty['period']
+                            if period not in penalties['period_totals']:
+                                penalties['period_totals'][period] = {'visitor': 0, 'home': 0}
+                            
+                            if penalty['team'] == 'NJD':  # Assuming visitor team
+                                penalties['period_totals'][period]['visitor'] += 1
+                            else:
+                                penalties['period_totals'][period]['home'] += 1
+                                
+        except Exception as e:
+            self.logger.error(f"Error parsing penalties section: {e}")
+            penalties['error'] = str(e)
+        
+        return penalties
+    
+    def _parse_team_stats(self, soup: BeautifulSoup) -> Dict[str, Any]:
+        """Parse team statistics section."""
+        team_stats = {
+            'visitor_stats': {},
+            'home_stats': {}
+        }
+        
+        try:
+            # Find team stats section
+            stats_section = soup.find('td', string='TEAM STATS')
+            if stats_section:
+                # Find the team stats table
+                table = stats_section.find_parent().find_next('table')
+                if table:
+                    rows = table.find_all('tr')
+                    for row in rows[1:]:  # Skip header row
+                        cells = row.find_all('td')
+                        if len(cells) >= 3:
+                            stat_name = cells[0].get_text(strip=True)
+                            visitor_value = cells[1].get_text(strip=True)
+                            home_value = cells[2].get_text(strip=True)
+                            
+                            team_stats['visitor_stats'][stat_name] = visitor_value
+                            team_stats['home_stats'][stat_name] = home_value
+                            
+        except Exception as e:
+            self.logger.error(f"Error parsing team stats: {e}")
+            team_stats['error'] = str(e)
+        
+        return team_stats
+    
+    def _parse_officials(self, soup: BeautifulSoup) -> Dict[str, Any]:
+        """Parse officials section."""
+        officials = {
+            'referees': [],
+            'linesmen': []
+        }
+        
+        try:
+            # Find officials section
+            officials_section = soup.find('td', string='OFFICIALS')
+            if officials_section:
+                # Find the officials table
+                table = officials_section.find_parent().find_next('table')
+                if table:
+                    rows = table.find_all('tr')
+                    for row in rows[1:]:  # Skip header row
+                        cells = row.find_all('td')
+                        if len(cells) >= 2:
+                            official_type = cells[0].get_text(strip=True)
+                            official_name = cells[1].get_text(strip=True)
+                            
+                            if 'Referee' in official_type:
+                                officials['referees'].append(official_name)
+                            elif 'Linesman' in official_type:
+                                officials['linesmen'].append(official_name)
+                                
+        except Exception as e:
+            self.logger.error(f"Error parsing officials: {e}")
+            officials['error'] = str(e)
+        
+        return officials
+    
+    def _parse_three_stars(self, soup: BeautifulSoup) -> Dict[str, Any]:
+        """Parse three stars section."""
+        three_stars = {
+            'stars': []
+        }
+        
+        try:
+            # Find three stars section
+            stars_section = soup.find('td', string='THREE STARS')
+            if stars_section:
+                # Find the three stars table
+                table = stars_section.find_parent().find_next('table')
+                if table:
+                    rows = table.find_all('tr')
+                    for row in rows[1:]:  # Skip header row
+                        cells = row.find_all('td')
+                        if len(cells) >= 2:
+                            star_number = cells[0].get_text(strip=True)
+                            player_name = cells[1].get_text(strip=True)
+                            
+                            three_stars['stars'].append({
+                                'star': star_number,
+                                'player': player_name
+                            })
+                            
+        except Exception as e:
+            self.logger.error(f"Error parsing three stars: {e}")
+            three_stars['error'] = str(e)
+        
+        return three_stars
     
     def parse_game_summary_penalties(self, content: str) -> List[Dict[str, Any]]:
         """
@@ -1360,6 +1732,258 @@ class HTMLReportParser:
         
         return data
     
+    def parse_event_summary_data(self, soup: BeautifulSoup, file_path: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Parse Event Summary (ES) data with detailed player statistics and penalty information.
+        
+        Args:
+            soup: BeautifulSoup object of the HTML content
+            file_path: Optional file path for game ID extraction from filename
+            
+        Returns:
+            Dictionary containing all parsed event summary data
+        """
+        data = {
+            'report_type': 'ES',
+            'game_header': {},
+            'visitor_team_stats': {},
+            'home_team_stats': {},
+            'player_statistics': {
+                'visitor': [],
+                'home': []
+            }
+        }
+        
+        try:
+            # Parse game header (teams, score, date, venue)
+            data['game_header'] = self._parse_game_header(soup, file_path)
+            
+            # Store game data and ID for reference data lookup
+            self._current_game_data = data['game_header']
+            self._current_game_id = data['game_header'].get('game_info', {}).get('game_id')
+            
+            # Parse visitor team player statistics
+            data['player_statistics']['visitor'] = self._parse_team_player_stats(soup, 'visitor')
+            
+            # Parse home team player statistics  
+            data['player_statistics']['home'] = self._parse_team_player_stats(soup, 'home')
+            
+            # Parse team summary statistics
+            data['visitor_team_stats'] = self._parse_team_summary_stats(soup, 'visitor')
+            data['home_team_stats'] = self._parse_team_summary_stats(soup, 'home')
+            
+        except Exception as e:
+            self.logger.error(f"Error parsing event summary data: {e}")
+            data['error'] = str(e)
+        
+        return data
+    
+    def _parse_team_player_stats(self, soup: BeautifulSoup, team_type: str) -> List[Dict[str, Any]]:
+        """
+        Parse player statistics for a specific team from Event Summary.
+        
+        Args:
+            soup: BeautifulSoup object of the HTML content
+            team_type: 'visitor' or 'home'
+            
+        Returns:
+            List of player statistics dictionaries
+        """
+        players = []
+        
+        try:
+            # Find tables with player data (tables with many player rows)
+            all_tables = soup.find_all('table')
+            player_tables = []
+            
+            for table in all_tables:
+                rows = table.find_all('tr')
+                player_rows = 0
+                for row in rows:
+                    cells = row.find_all('td')
+                    if len(cells) >= 15:
+                        first_cell = cells[0].get_text(strip=True)
+                        if first_cell.isdigit():
+                            player_rows += 1
+                
+                if player_rows > 20:  # Only tables with significant player data
+                    player_tables.append(table)
+            
+            # Use the first table for visitor, second for home
+            target_table = None
+            if team_type == 'visitor' and len(player_tables) > 0:
+                target_table = player_tables[0]
+            elif team_type == 'home' and len(player_tables) > 1:
+                target_table = player_tables[1]
+            
+            if target_table:
+                rows = target_table.find_all('tr')
+                for row in rows:
+                    cells = row.find_all('td')
+                    if len(cells) >= 15:  # Ensure we have enough columns for player stats
+                        # Check if first cell contains a sweater number
+                        sweater_cell = cells[0]
+                        sweater_text = sweater_cell.get_text(strip=True)
+                        
+                        if sweater_text.isdigit():
+                            player_stats = self._extract_player_stats_from_row(cells, team_type)
+                            if player_stats:
+                                players.append(player_stats)
+                                
+        except Exception as e:
+            self.logger.error(f"Error parsing {team_type} team player stats: {e}")
+        
+        return players
+    
+    def _extract_player_stats_from_row(self, cells: List, team_type: str) -> Dict[str, Any]:
+        """
+        Extract player statistics from a table row.
+        
+        Args:
+            cells: List of table cells
+            team_type: 'visitor' or 'home'
+            
+        Returns:
+            Dictionary with player statistics
+        """
+        try:
+            # Extract basic player info
+            sweater_number = int(cells[0].get_text(strip=True))
+            position = cells[1].get_text(strip=True)
+            player_name = cells[2].get_text(strip=True)
+            
+            # Get team ID from game header data
+            team_id = None
+            if hasattr(self, '_current_game_data') and self._current_game_data:
+                if team_type == 'visitor':
+                    team_id = self._current_game_data.get('visitor_team', {}).get('id')
+                else:
+                    team_id = self._current_game_data.get('home_team', {}).get('id')
+            
+            # Use reference data to get player ID and full name
+            player_id = None
+            resolved_name = player_name
+            if team_id:
+                # Try to resolve player name using reference data
+                resolved_name = self._resolve_player_name(team_id, sweater_number, player_name)
+                
+                # Get player ID from reference data
+                boxscore_data = self.reference_data.get_boxscore_by_id(self._current_game_id) if hasattr(self, '_current_game_id') else None
+                if boxscore_data:
+                    team_key = 'awayTeam' if team_type == 'visitor' else 'homeTeam'
+                    player_stats = boxscore_data.get('playerByGameStats', {}).get(team_key, {})
+                    for player_type in ['forwards', 'defense', 'goalies']:
+                        for player in player_stats.get(player_type, []):
+                            if player.get('sweaterNumber') == sweater_number:
+                                player_id = player.get('playerId')
+                                break
+                        if player_id:
+                            break
+            
+            # Extract statistics (based on ES file structure)
+            goals = self._safe_int(cells[3].get_text(strip=True))
+            assists = self._safe_int(cells[4].get_text(strip=True))
+            points = self._safe_int(cells[5].get_text(strip=True))
+            plus_minus = self._safe_int(cells[6].get_text(strip=True))
+            penalty_number = self._safe_int(cells[7].get_text(strip=True))  # PN
+            penalty_minutes = self._safe_int(cells[8].get_text(strip=True))  # PIM
+            
+            # Time on Ice data
+            toi_total = cells[9].get_text(strip=True)
+            shifts = self._safe_int(cells[10].get_text(strip=True))
+            avg_shift = cells[11].get_text(strip=True)
+            toi_pp = cells[12].get_text(strip=True)
+            toi_sh = cells[13].get_text(strip=True)
+            toi_ev = cells[14].get_text(strip=True)
+            
+            # Additional stats
+            shots = self._safe_int(cells[15].get_text(strip=True))
+            attempts_blocked = self._safe_int(cells[16].get_text(strip=True))
+            missed_shots = self._safe_int(cells[17].get_text(strip=True))
+            hits = self._safe_int(cells[18].get_text(strip=True))
+            giveaways = self._safe_int(cells[19].get_text(strip=True))
+            takeaways = self._safe_int(cells[20].get_text(strip=True))
+            blocked_shots = self._safe_int(cells[21].get_text(strip=True))
+            faceoffs_won = self._safe_int(cells[22].get_text(strip=True))
+            faceoffs_lost = self._safe_int(cells[23].get_text(strip=True))
+            faceoff_percentage = self._safe_float(cells[24].get_text(strip=True))
+            
+            return {
+                'player_id': player_id,
+                'sweater_number': sweater_number,
+                'position': position,
+                'name': resolved_name,
+                'original_name': player_name,
+                'team_id': team_id,
+                'team_type': team_type,
+                'goals': goals,
+                'assists': assists,
+                'points': points,
+                'plus_minus': plus_minus,
+                'penalty_number': penalty_number,
+                'penalty_minutes': penalty_minutes,
+                'time_on_ice': {
+                    'total': toi_total,
+                    'shifts': shifts,
+                    'avg_shift': avg_shift,
+                    'power_play': toi_pp,
+                    'short_handed': toi_sh,
+                    'even_strength': toi_ev
+                },
+                'shots': shots,
+                'attempts_blocked': attempts_blocked,
+                'missed_shots': missed_shots,
+                'hits': hits,
+                'giveaways': giveaways,
+                'takeaways': takeaways,
+                'blocked_shots': blocked_shots,
+                'faceoffs': {
+                    'won': faceoffs_won,
+                    'lost': faceoffs_lost,
+                    'percentage': faceoff_percentage
+                }
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error extracting player stats from row: {e}")
+            return None
+    
+    def _parse_team_summary_stats(self, soup: BeautifulSoup, team_type: str) -> Dict[str, Any]:
+        """
+        Parse team summary statistics from Event Summary.
+        
+        Args:
+            soup: BeautifulSoup object of the HTML content
+            team_type: 'visitor' or 'home'
+            
+        Returns:
+            Dictionary with team summary statistics
+        """
+        # This would parse team totals, power play stats, etc.
+        # For now, return placeholder
+        return {
+            'team_type': team_type,
+            'message': 'Team summary stats parsing not yet implemented'
+        }
+    
+    def _safe_int(self, value: str) -> int:
+        """Safely convert string to integer, returning 0 for empty/invalid values."""
+        if not value or value.strip() == '' or value.strip() == '&nbsp;':
+            return 0
+        try:
+            return int(value.strip())
+        except ValueError:
+            return 0
+    
+    def _safe_float(self, value: str) -> float:
+        """Safely convert string to float, returning 0.0 for empty/invalid values."""
+        if not value or value.strip() == '' or value.strip() == '&nbsp;':
+            return 0.0
+        try:
+            return float(value.strip())
+        except ValueError:
+            return 0.0
+    
     def parse_shot_summary_data(self, soup: BeautifulSoup) -> Dict[str, Any]:
         """Parse complete Shot Summary (SS) data using BeautifulSoup."""
         data = {
@@ -1391,36 +2015,533 @@ class HTMLReportParser:
         
         return data
     
-    def parse_faceoff_summary_data(self, soup: BeautifulSoup) -> Dict[str, Any]:
-        """Parse complete Faceoff Summary (FS) data using BeautifulSoup."""
+    def parse_faceoff_summary_data(self, soup: BeautifulSoup, file_path: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Parse complete Faceoff Summary (FS) data using BeautifulSoup.
+        
+        Args:
+            soup: BeautifulSoup object of the HTML content
+            file_path: Optional file path for game ID extraction from filename
+            
+        Returns:
+            Dictionary containing all parsed faceoff summary data
+        """
         data = {
             'report_type': 'FS',
+            'game_header': {},
             'faceoffs_by_period': {},
-            'player_faceoffs': {}
+            'player_faceoffs': {
+                'visitor': [],
+                'home': []
+            },
+            'team_totals': {
+                'visitor': {},
+                'home': {}
+            }
         }
         
         try:
-            # Extract faceoff information
-            faceoff_tables = soup.find_all('table')
+            # Parse game header (teams, score, date, venue)
+            data['game_header'] = self._parse_game_header(soup, file_path)
             
-            for table in faceoff_tables:
-                rows = table.find_all('tr')
-                for row in rows:
-                    cells = row.find_all('td')
-                    if len(cells) >= 3:
-                        faceoff_data = self.extract_faceoff_data(cells)
-                        if faceoff_data:
-                            period = faceoff_data.get('period', 'unknown')
-                            if period not in data['faceoffs_by_period']:
-                                data['faceoffs_by_period'][period] = []
-                            data['faceoffs_by_period'][period].append(faceoff_data)
-                            
+            # Store game data and ID for reference data lookup
+            self._current_game_data = data['game_header']
+            self._current_game_id = data['game_header'].get('game_info', {}).get('game_id')
+            
+            # Parse faceoff data by period and player
+            data['faceoffs_by_period'] = self._parse_faceoffs_by_period(soup)
+            
+            # Parse player faceoff statistics
+            data['player_faceoffs']['visitor'] = self._parse_team_faceoff_stats(soup, 'visitor')
+            data['player_faceoffs']['home'] = self._parse_team_faceoff_stats(soup, 'home')
+            
+            # Parse team totals
+            data['team_totals'] = self._parse_faceoff_team_totals(soup)
+            
         except Exception as e:
             self.logger.error(f"Error parsing faceoff summary data: {e}")
             data['error'] = str(e)
         
         return data
     
+    def _parse_faceoffs_by_period(self, soup: BeautifulSoup) -> Dict[str, Any]:
+        """
+        Parse faceoff data organized by period.
+        
+        Args:
+            soup: BeautifulSoup object of the HTML content
+            
+        Returns:
+            Dictionary with faceoff data by period
+        """
+        faceoffs_by_period = {}
+        
+        try:
+            # Look for tables with faceoff data
+            tables = soup.find_all('table')
+            
+            for table in tables:
+                rows = table.find_all('tr')
+                for row in rows:
+                    cells = row.find_all('td')
+                    if len(cells) >= 3:
+                        # Check if this row contains faceoff data
+                        faceoff_data = self._extract_faceoff_data_from_row(cells)
+                        if faceoff_data:
+                            period = faceoff_data.get('period', 'unknown')
+                            if period not in faceoffs_by_period:
+                                faceoffs_by_period[period] = []
+                            faceoffs_by_period[period].append(faceoff_data)
+                            
+        except Exception as e:
+            self.logger.error(f"Error parsing faceoffs by period: {e}")
+        
+        return faceoffs_by_period
+    
+    def _parse_team_faceoff_stats(self, soup: BeautifulSoup, team_type: str) -> List[Dict[str, Any]]:
+        """
+        Parse faceoff statistics for a specific team.
+        
+        Args:
+            soup: BeautifulSoup object of the HTML content
+            team_type: 'visitor' or 'home'
+            
+        Returns:
+            List of player faceoff statistics
+        """
+        players = []
+        
+        try:
+            # Find the PlayerTable which contains detailed faceoff data
+            player_table = soup.find('table', id='PlayerTable')
+            if not player_table:
+                return players
+            
+            # Look for player headers and their associated faceoff data
+            rows = player_table.find_all('tr')
+            current_player = None
+            current_team = None
+            team_header_count = 0
+            
+            for row in rows:
+                cells = row.find_all('td')
+                if len(cells) >= 1:
+                    # Prefer detecting team headers via class
+                    cell_classes = cells[0].get('class') or []
+                    if any('teamHeading' in cls for cls in cell_classes):
+                        current_team = 'visitor' if team_header_count == 0 else 'home'
+                        team_header_count += 1
+                        continue
+                    
+                    cell_text = cells[0].get_text(strip=True)
+                    
+                    # Skip the first row which contains concatenated data (has many cells)
+                    if len(cells) > 100:
+                        continue
+                    
+                    # Only process players for the requested team
+                    if current_team != team_type:
+                        continue
+                    
+                    # Check if this is a player header (e.g., "13 C HISCHIER, NICO")
+                    # Look for pattern like "13 C HISCHIER, NICO" (sweater number, position, name)
+                    player_match = re.search(r'(\d+)\s+([A-Z])\s+([A-Z\s,]+)', cell_text)
+                    if player_match and len(cells) == 1:  # Player headers are typically single-cell rows
+                        sweater_number = int(player_match.group(1))
+                        position = player_match.group(2)
+                        player_name = player_match.group(3).strip()
+                        
+                        # Get team ID from game header data
+                        team_id = None
+                        if hasattr(self, '_current_game_data') and self._current_game_data:
+                            if team_type == 'visitor':
+                                team_id = self._current_game_data.get('visitor_team', {}).get('id')
+                            else:
+                                team_id = self._current_game_data.get('home_team', {}).get('id')
+                        
+                        # Use reference data to get player ID and full name
+                        player_id = None
+                        resolved_name = player_name
+                        if team_id:
+                            # Try to resolve player name using reference data
+                            resolved_name = self._resolve_player_name(team_id, sweater_number, player_name)
+                            
+                            # Get player ID from reference data
+                            boxscore_data = self.reference_data.get_boxscore_by_id(self._current_game_id) if hasattr(self, '_current_game_id') else None
+                            if boxscore_data:
+                                team_key = 'awayTeam' if team_type == 'visitor' else 'homeTeam'
+                                player_stats = boxscore_data.get('playerByGameStats', {}).get(team_key, {})
+                                for player_type in ['forwards', 'defense', 'goalies']:
+                                    for player in player_stats.get(player_type, []):
+                                        if player.get('sweaterNumber') == sweater_number:
+                                            player_id = player.get('playerId')
+                                            break
+                                    if player_id:
+                                        break
+                        
+                        current_player = {
+                            'player_id': player_id,
+                            'sweater_number': sweater_number,
+                            'position': position,
+                            'name': resolved_name,
+                            'original_name': player_name,
+                            'team_id': team_id,
+                            'team_type': team_type,
+                            'faceoff_details': []
+                        }
+                        players.append(current_player)
+                    
+                    # If we have a current player and this row contains faceoff data
+                    elif current_player and len(cells) >= 5:
+                        # Dynamically detect any strength label like "NvM" (e.g., 6v5, 5v3) or known tokens like TOT
+                        strength = cells[0].get_text(strip=True)
+                        is_strength = bool(re.match(r"^\d+v\d+$", strength, flags=re.IGNORECASE)) or strength.upper() == 'TOT'
+                        if is_strength:
+                            # Extract faceoff data from cells 1-4 (Off, Def, Neu, TOT)
+                            faceoff_data = []
+                            for cell in cells[1:5]:  # Skip first cell (strength info)
+                                cell_text = cell.get_text(strip=True)
+                                if cell_text and '/' in cell_text and '%' in cell_text:
+                                    faceoff_match = re.search(r'(\d+)-(\d+)/(\d+)%', cell_text)
+                                    if faceoff_match:
+                                        won = int(faceoff_match.group(1))
+                                        total = int(faceoff_match.group(2))
+                                        percentage = int(faceoff_match.group(3))
+                                        lost = total - won
+                                        
+                                        faceoff_data.append({
+                                            'won': won,
+                                            'lost': lost,
+                                            'total': total,
+                                            'percentage': percentage,
+                                            'raw_text': cell_text
+                                        })
+                                    else:
+                                        faceoff_data.append(None)
+                                else:
+                                    faceoff_data.append(None)
+                            
+                            # Add faceoff detail if we have any data
+                            if any(faceoff_data):
+                                current_player['faceoff_details'].append({
+                                    'strength': strength,
+                                    'offensive_zone': faceoff_data[0],
+                                    'defensive_zone': faceoff_data[1],
+                                    'neutral_zone': faceoff_data[2],
+                                    'total': faceoff_data[3] if len(faceoff_data) > 3 else None
+                                })
+                                
+        except Exception as e:
+            self.logger.error(f"Error parsing {team_type} team faceoff stats: {e}")
+        
+        return players
+    
+    def _extract_faceoff_data_from_row(self, cells: List) -> Optional[Dict[str, Any]]:
+        """
+        Extract faceoff data from a table row.
+        
+        Args:
+            cells: List of table cells
+            
+        Returns:
+            Dictionary with faceoff data or None
+        """
+        try:
+            # Look for faceoff data pattern (e.g., "4-14/29%")
+            for cell in cells:
+                cell_text = cell.get_text(strip=True)
+                if '/' in cell_text and '%' in cell_text:
+                    # Parse faceoff data: "4-14/29%"
+                    faceoff_match = re.search(r'(\d+)-(\d+)/(\d+)%', cell_text)
+                    if faceoff_match:
+                        won = int(faceoff_match.group(1))
+                        total = int(faceoff_match.group(2))
+                        percentage = int(faceoff_match.group(3))
+                        lost = total - won
+                        
+                        return {
+                            'won': won,
+                            'lost': lost,
+                            'total': total,
+                            'percentage': percentage,
+                            'raw_text': cell_text
+                        }
+            
+            return None
+            
+        except Exception as e:
+            self.logger.error(f"Error extracting faceoff data from row: {e}")
+            return None
+    
+    def _extract_player_faceoff_stats(self, cells: List, team_type: str) -> Optional[Dict[str, Any]]:
+        """
+        Extract player faceoff statistics from a table row.
+        
+        Args:
+            cells: List of table cells
+            team_type: 'visitor' or 'home'
+            
+        Returns:
+            Dictionary with player faceoff statistics
+        """
+        try:
+            # Extract basic player info
+            sweater_number = int(cells[0].get_text(strip=True))
+            player_name = cells[1].get_text(strip=True) if len(cells) > 1 else ""
+            
+            # Get team ID from game header data
+            team_id = None
+            if hasattr(self, '_current_game_data') and self._current_game_data:
+                if team_type == 'visitor':
+                    team_id = self._current_game_data.get('visitor_team', {}).get('id')
+                else:
+                    team_id = self._current_game_data.get('home_team', {}).get('id')
+            
+            # Use reference data to get player ID and full name
+            player_id = None
+            resolved_name = player_name
+            if team_id:
+                # Try to resolve player name using reference data
+                resolved_name = self._resolve_player_name(team_id, sweater_number, player_name)
+                
+                # Get player ID from reference data
+                boxscore_data = self.reference_data.get_boxscore_by_id(self._current_game_id) if hasattr(self, '_current_game_id') else None
+                if boxscore_data:
+                    team_key = 'awayTeam' if team_type == 'visitor' else 'homeTeam'
+                    player_stats = boxscore_data.get('playerByGameStats', {}).get(team_key, {})
+                    for player_type in ['forwards', 'defense', 'goalies']:
+                        for player in player_stats.get(player_type, []):
+                            if player.get('sweaterNumber') == sweater_number:
+                                player_id = player.get('playerId')
+                                break
+                        if player_id:
+                            break
+            
+            # Extract faceoff data from cells
+            faceoff_data = None
+            for cell in cells:
+                cell_text = cell.get_text(strip=True)
+                if '/' in cell_text and '%' in cell_text:
+                    faceoff_match = re.search(r'(\d+)-(\d+)/(\d+)%', cell_text)
+                    if faceoff_match:
+                        won = int(faceoff_match.group(1))
+                        total = int(faceoff_match.group(2))
+                        percentage = int(faceoff_match.group(3))
+                        lost = total - won
+                        
+                        faceoff_data = {
+                            'won': won,
+                            'lost': lost,
+                            'total': total,
+                            'percentage': percentage,
+                            'raw_text': cell_text
+                        }
+                        break
+            
+            if faceoff_data:
+                return {
+                    'player_id': player_id,
+                    'sweater_number': sweater_number,
+                    'name': resolved_name,
+                    'original_name': player_name,
+                    'team_id': team_id,
+                    'team_type': team_type,
+                    'faceoffs': faceoff_data
+                }
+            
+            return None
+            
+        except Exception as e:
+            self.logger.error(f"Error extracting player faceoff stats from row: {e}")
+            return None
+    
+    def _parse_faceoff_team_totals(self, soup: BeautifulSoup) -> Dict[str, Any]:
+        """
+        Parse team faceoff totals from Faceoff Summary.
+        
+        Args:
+            soup: BeautifulSoup object of the HTML content
+            
+        Returns:
+            Dictionary with team totals
+        """
+        team_totals = {
+            'visitor': {},
+            'home': {}
+        }
+        
+        try:
+            # Find the team summary table
+            tables = soup.find_all('table')
+            team_summary_table = None
+            
+            for table in tables:
+                rows = table.find_all('tr')
+                if rows:
+                    first_row_text = rows[0].get_text(strip=True)
+                    if 'TEAM SUMMARY' in first_row_text:
+                        team_summary_table = table
+                        break
+            
+            if not team_summary_table:
+                return team_totals
+            
+            rows = team_summary_table.find_all('tr')
+            current_team = None
+            team_header_count = 0
+            
+            for row in rows:
+                cells = row.find_all('td')
+                if not cells:
+                    continue
+                
+                cell_texts = [c.get_text(strip=True) for c in cells]
+                
+                # Check for team headers dynamically via class
+                first_cell_classes = cells[0].get('class') or []
+                if any('teamHeading' in cls for cls in first_cell_classes):
+                    current_team = 'visitor' if team_header_count == 0 else 'home'
+                    team_header_count += 1
+                    continue
+                
+                # Skip header rows
+                if any(text in ['Per', 'EV', 'PP', 'SH', 'TOT', 'Zone', 'Strength', 'Off.', 'Def.', 'Neu.'] for text in cell_texts):
+                    continue
+                
+                # Parse period data (rows with period numbers or OT variants)
+                if len(cell_texts) >= 5 and (re.match(r'^\d+$', cell_texts[0]) or re.match(r'^OT\d*$', cell_texts[0], flags=re.IGNORECASE)):
+                    if current_team:
+                        period_token = cell_texts[0]
+                        if period_token.isdigit():
+                            period_key = f'period_{int(period_token)}'
+                        else:
+                            # Handle OT, OT2, etc.
+                            ot_suffix = period_token[2:]
+                            period_key = 'period_ot' if ot_suffix == '' else f'period_ot{ot_suffix}'
+                        
+                        if period_key not in team_totals[current_team]:
+                            team_totals[current_team][period_key] = {}
+                        
+                        # Parse faceoff data: EV, PP, SH, TOT
+                        team_totals[current_team][period_key]['even_strength'] = self._parse_faceoff_stat(cell_texts[1])
+                        team_totals[current_team][period_key]['power_play'] = self._parse_faceoff_stat(cell_texts[2])
+                        team_totals[current_team][period_key]['penalty_kill'] = self._parse_faceoff_stat(cell_texts[3])
+                        team_totals[current_team][period_key]['total'] = self._parse_faceoff_stat(cell_texts[4])
+                
+                # Parse strength data (rows with NvM like 5v5, 5v4, 4v5, 3v5, 6v5, etc., or TOT)
+                elif len(cell_texts) >= 5 and (re.match(r"^\d+v\d+$", cell_texts[0], flags=re.IGNORECASE) or cell_texts[0].upper() == 'TOT'):
+                    if current_team:
+                        strength = cell_texts[0]
+                        strength_key = f'strength_{strength}'
+                        
+                        if strength_key not in team_totals[current_team]:
+                            team_totals[current_team][strength_key] = {}
+                        
+                        # Parse zone data: Off, Def, Neu, TOT
+                        team_totals[current_team][strength_key]['offensive_zone'] = self._parse_faceoff_stat(cell_texts[1])
+                        team_totals[current_team][strength_key]['defensive_zone'] = self._parse_faceoff_stat(cell_texts[2])
+                        team_totals[current_team][strength_key]['neutral_zone'] = self._parse_faceoff_stat(cell_texts[3])
+                        team_totals[current_team][strength_key]['total'] = self._parse_faceoff_stat(cell_texts[4])
+                        
+                        
+        except Exception as e:
+            self.logger.error(f"Error parsing faceoff team totals: {e}")
+        
+        return team_totals
+    
+    def _parse_faceoff_stat(self, stat_text: str) -> Dict[str, Any]:
+        """
+        Parse a faceoff statistic string like "16-46/35%".
+        
+        Args:
+            stat_text: Faceoff statistic string
+            
+        Returns:
+            Dictionary with won, lost, total, percentage
+        """
+        if not stat_text or stat_text == '':
+            return None
+        
+        try:
+            # Parse format like "16-46/35%"
+            match = re.search(r'(\d+)-(\d+)/(\d+)%', stat_text)
+            if match:
+                won = int(match.group(1))
+                total = int(match.group(2))
+                percentage = int(match.group(3))
+                lost = total - won
+                
+                return {
+                    'won': won,
+                    'lost': lost,
+                    'total': total,
+                    'percentage': percentage,
+                    'raw_text': stat_text
+                }
+        except Exception as e:
+            self.logger.error(f"Error parsing faceoff stat '{stat_text}': {e}")
+        
+        return None
+    
+    def _normalize_strength_label(self, strength: str, team_type: Optional[str] = None) -> Dict[str, Any]:
+        """Normalize a strength label like '5v4', '4v5', '6v5', '4v4', or 'TOT'.
+
+        Returns a metadata dictionary including skater counts, man advantage,
+        and standardized situation labels.
+        """
+        try:
+            raw = (strength or '').strip()
+            if not raw:
+                return {'raw': strength}
+
+            if raw.upper() == 'TOT':
+                return {
+                    'raw': raw,
+                    'label': 'TOT',
+                    'situation': 'total',
+                }
+
+            match = re.match(r'^(\d+)v(\d+)$', raw, flags=re.IGNORECASE)
+            if not match:
+                return {'raw': raw, 'situation': 'unknown'}
+
+            skaters_for = int(match.group(1))
+            skaters_against = int(match.group(2))
+            man_advantage = skaters_for - skaters_against
+
+            pulled_for = skaters_for > 5
+            pulled_against = skaters_against > 5
+
+            if pulled_for or pulled_against:
+                label = 'EN'
+                situation = 'empty_net'
+            elif man_advantage > 0:
+                label = 'PP'
+                situation = 'power_play'
+            elif man_advantage < 0:
+                label = 'SH'
+                situation = 'penalty_kill'
+            else:
+                label = 'EV'
+                situation = 'even_strength'
+
+            return {
+                'raw': raw,
+                'skaters_for': skaters_for,
+                'skaters_against': skaters_against,
+                'man_advantage': man_advantage,
+                'label': label,
+                'situation': situation,
+                'pulled_goalie_for': pulled_for,
+                'pulled_goalie_against': pulled_against,
+                'both_goalies_pulled': pulled_for and pulled_against,
+                'three_on_three': skaters_for == 3 and skaters_against == 3,
+                'four_on_four': skaters_for == 4 and skaters_against == 4,
+                'team_type': team_type,
+            }
+        except Exception:
+            return {'raw': strength, 'situation': 'unknown'}
+
     def parse_faceoff_comparison_data(self, soup: BeautifulSoup) -> Dict[str, Any]:
         """Parse complete Faceoff Comparison (FC) data using BeautifulSoup."""
         data = {
@@ -1448,33 +2569,315 @@ class HTMLReportParser:
         
         return data
     
-    def parse_time_on_ice_data(self, soup: BeautifulSoup, report_type: str) -> Dict[str, Any]:
-        """Parse complete Time on Ice (TH/TV) data using BeautifulSoup."""
+    def parse_time_on_ice_data(self, soup: BeautifulSoup, report_type: str, file_path: Optional[str] = None) -> Dict[str, Any]:
+        """Parse Time on Ice (TH/TV) data: per-player totals and special-teams TOI.
+
+        Extracts for each player:
+        - sweater_number, name (resolved via reference where possible), player_id
+        - shifts (SHF), total TOI, PP total, SH total
+        """
         data = {
             'report_type': report_type,
-            'player_time_on_ice': {},
-            'line_combinations': {},
-            'defense_pairs': {}
+            'game_header': {},
+            'player_time_on_ice': {
+                'visitor': [],
+                'home': []
+            }
         }
-        
+
         try:
-            # Extract time on ice information
-            time_tables = soup.find_all('table')
-            
-            for table in time_tables:
-                rows = table.find_all('tr')
-                for row in rows:
-                    cells = row.find_all('td')
-                    if len(cells) >= 4:
-                        time_data = self.extract_time_on_ice_data(cells)
-                        if time_data:
-                            player_name = time_data.get('player_name', 'unknown')
-                            data['player_time_on_ice'][player_name] = time_data
-                            
+            # Parse header for game/team context
+            data['game_header'] = self._parse_game_header(soup, file_path)
+            self._current_game_data = data['game_header']
+            self._current_game_id = data['game_header'].get('game_info', {}).get('game_id')
+
+            # Iterate each player block: identified by a td with class containing 'playerHeading'
+            player_heading_cells = [td for td in soup.find_all('td') if 'playerHeading' in (td.get('class') or [])]
+            player_headers = player_heading_cells  # Make this available in the loop scope
+            for heading_cell in player_heading_cells:
+                heading_text = heading_cell.get_text(strip=True)
+                # Typical formats: "4 BYRAM, BOWEN" or "1 LUUKKONEN, UKKO-PEKKA"
+                parts = heading_text.split(' ', 1)
+                if len(parts) < 2 or not parts[0].isdigit():
+                    continue
+                sweater_number = int(parts[0])
+                player_name_raw = parts[1].strip()
+
+                # Determine team type by searching ancestor tables with id Visitor/Home
+                team_type = None
+                parent = heading_cell.parent
+                while parent is not None and parent.name != 'body':
+                    if parent.name == 'table' and parent.has_attr('id'):
+                        tid = parent.get('id')
+                        if isinstance(tid, str):
+                            if tid.lower().startswith('visitor'):
+                                team_type = 'visitor'
+                                break
+                            if tid.lower().startswith('home'):
+                                team_type = 'home'
+                                break
+                    parent = parent.parent
+                if team_type is None:
+                    # Fallback: default using report type (TH->home, TV->visitor)
+                    team_type = 'home' if report_type == 'TH' else 'visitor'
+
+                # Resolve team_id and player_id using reference data
+                team_id = None
+                if self._current_game_data:
+                    team_id = self._current_game_data.get('visitor_team', {}).get('id') if team_type == 'visitor' else self._current_game_data.get('home_team', {}).get('id')
+
+                resolved_name = player_name_raw
+                player_id = None
+                if team_id:
+                    resolved_name = self._resolve_player_name(team_id, sweater_number, player_name_raw)
+                    box = self.reference_data.get_boxscore_by_id(self._current_game_id)
+                    if box:
+                        team_key = 'awayTeam' if team_type == 'visitor' else 'homeTeam'
+                        for group in ['forwards', 'defensemen', 'goalies']:
+                            for pl in (box.get('playerByGameStats', {}).get(team_key, {}).get(group, []) or []):
+                                if pl.get('sweaterNumber') == sweater_number:
+                                    player_id = pl.get('playerId')
+                                    break
+                            if player_id:
+                                break
+
+                # Initialize entry
+                entry = {
+                    'player_id': player_id,
+                    'sweater_number': sweater_number,
+                    'name': resolved_name,
+                    'original_name': player_name_raw,
+                    'team_id': team_id,
+                    'team_type': team_type,
+                    'shifts': [],
+                    'totals': {
+                        'shifts': None,
+                        'toi': None,
+                        'pp_toi': None,
+                        'sh_toi': None
+                    }
+                }
+
+                # Scan rows after the player heading:
+                # 1) Shift table header row (contains 'Shift #' and 'Start of Shift')
+                # 2) Multiple shift rows until totals header (contains 'SHF' and 'TOI') or next player heading
+                # 3) Totals values row (immediately after totals header), and nested per-period totals table
+                row = heading_cell.parent
+                player_table = heading_cell.find_parent('table')  # Find the main table containing this player
+                found_shift_header = False
+                found_totals_header = False
+                # Determine shift column indexes from header row once found
+                idx_shift = idx_per = idx_start = idx_end = idx_duration = idx_event = None
+
+                # Find the shift section for THIS specific player
+                # We need to find the shift header that comes after this player's heading
+                # but before the next player's heading
+                probe = row
+                next_player_found = False
+                for _ in range(1000):
+                    probe = probe.find_next_sibling('tr')
+                    if not probe:
+                        break
+                    cells = probe.find_all('td')
+                    if not cells:
+                        continue
+                    
+                    # Check if we hit the next player heading
+                    if any('playerHeading' in (td.get('class') or []) for td in cells):
+                        next_player_found = True
+                        break
+                    
+                    texts_upper = [c.get_text(strip=True).upper() for c in cells]
+                    if any('SHIFT #' in t for t in texts_upper) and any('START OF SHIFT' in t for t in texts_upper):
+                        found_shift_header = True
+                        # Map column indexes
+                        for i, t in enumerate(texts_upper):
+                            if 'SHIFT #' in t:
+                                idx_shift = i
+                            elif t == 'PER':
+                                idx_per = i
+                            elif 'START OF SHIFT' in t:
+                                idx_start = i
+                            elif 'END OF SHIFT' in t:
+                                idx_end = i
+                            elif 'DURATION' in t:
+                                idx_duration = i
+                            elif 'EVENT' in t:
+                                idx_event = i
+                        row = probe
+                        break
+                
+                # If we found the next player before finding shift header, this player has no shifts
+                if next_player_found and not found_shift_header:
+                    continue
+
+                # Collect shift rows until we encounter totals header
+                if found_shift_header:
+                    for _ in range(5000):
+                        row = row.find_next_sibling('tr')
+                        if not row:
+                            break
+                        cells = row.find_all('td')
+                        if not cells:
+                            continue
+                        # Stop at next player heading
+                        if any('playerHeading' in (td.get('class') or []) for td in cells):
+                            break
+                        texts_upper = [c.get_text(strip=True).upper() for c in cells]
+                        # Totals header?
+                        if ('SHF' in texts_upper) and ('TOI' in texts_upper):
+                            found_totals_header = True
+                            totals_header_cells = cells
+                            break
+                        # Likely a shift row: expect at least 4 tds (shift #, start, end, event)
+                        cell_texts = [c.get_text(strip=True) for c in cells]
+                        # Validate using mapped indexes
+                        if (
+                            idx_shift is not None and idx_per is not None and idx_start is not None and idx_end is not None
+                            and idx_event is not None and idx_shift < len(cell_texts) and idx_per < len(cell_texts)
+                        ):
+                            shift_no_txt = cell_texts[idx_shift]
+                            if not shift_no_txt or not shift_no_txt.isdigit():
+                                continue
+                            per_txt = cell_texts[idx_per]
+                            if not per_txt or not per_txt.isdigit():
+                                continue
+                            shift_number = int(shift_no_txt)
+                            # Start/End columns include 'elapsed / game' values separated by '/'
+                            def split_elapsed_game(val: str):
+                                parts = [p.strip() for p in val.split('/')]
+                                if len(parts) == 2:
+                                    return {'elapsed': parts[0] or None, 'game': parts[1] or None}
+                                return {'elapsed': val or None, 'game': None}
+                            start_info = split_elapsed_game(cell_texts[idx_start] if idx_start < len(cell_texts) else '')
+                            end_info = split_elapsed_game(cell_texts[idx_end] if idx_end < len(cell_texts) else '')
+                            event_mark = cell_texts[idx_event] if idx_event < len(cell_texts) else None
+                            duration_val = cell_texts[idx_duration] if (idx_duration is not None and idx_duration < len(cell_texts)) else None
+                            # Require duration to look like a time value (contains ':') to treat as a valid shift row
+                            if not duration_val or ':' not in duration_val:
+                                continue
+                            entry['shifts'].append({
+                                'shift_number': shift_number,
+                                'period': int(per_txt),
+                                'start': start_info,
+                                'end': end_info,
+                                'duration': duration_val,
+                                'event': event_mark
+                            })
+
+                # Parse per-period totals table following shift section; capture the 'TOT' row values
+                if found_shift_header:
+                    # The summary tables are nested within the main player table
+                    # We need to find the summary table that belongs to THIS player
+                    probe_table = None
+                    
+                    # Look for nested tables in the player's section
+                    # We need to find the table that comes after this player's shift data
+                    # but before the next player's data
+                    nested_tables = player_table.find_all('table')
+                    
+                    # Find the summary table for this player
+                    # We need to find the table that matches this player's data
+                    # The tables are in order, so we can use the player's position to find the right table
+                    player_index = None
+                    for i, header in enumerate(player_headers):
+                        if header == heading_cell:
+                            player_index = i
+                            break
+                    
+                    if player_index is not None:
+                        # Find the summary table for this player
+                        # The tables should be in the same order as the players
+                        summary_table_count = 0
+                        for nested in nested_tables:
+                            # Check headers
+                            header_tr = nested.find('tr')
+                            if not header_tr:
+                                continue
+                            headers = [td.get_text(strip=True).upper().replace('\xa0', ' ') for td in header_tr.find_all('td')]
+                            if headers and 'PER' in headers and 'SHF' in headers and 'TOI' in headers:
+                                # This is a summary table - check if it has data rows
+                                data_rows = nested.find_all('tr')[1:]  # Skip header row
+                                if data_rows and any(row.find_all('td') for row in data_rows):
+                                    if summary_table_count == player_index:
+                                        probe_table = nested
+                                        break
+                                    summary_table_count += 1
+                    if probe_table:
+                        # Map column indexes by header names
+                        header_tr = probe_table.find('tr')
+                        hdrs = [td.get_text(strip=True).upper().replace('\xa0', ' ') for td in header_tr.find_all('td')]
+                        def idx(name):
+                            try:
+                                return hdrs.index(name)
+                            except ValueError:
+                                return None
+                        idx_shf = idx('SHF')
+                        idx_toi = idx('TOI')
+                        idx_ev = idx('EV TOT')
+                        idx_pp = idx('PP TOT')
+                        idx_sh = idx('SH TOT')
+                        def val(i):
+                            if i is None or i >= len(tds):
+                                return None
+                            return tds[i].get_text(strip=True) or None
+                        
+                        # Extract per-period and total data from the summary table using BeautifulSoup
+                        period_totals = {}
+                        
+                        # Find the SHF column index
+                        header_tr = probe_table.find('tr')
+                        headers = [td.get_text(strip=True).upper().replace('\xa0', ' ') for td in header_tr.find_all('td')]
+                        shf_idx = headers.index('SHF') if 'SHF' in headers else None
+                        toi_idx = headers.index('TOI') if 'TOI' in headers else None
+                        ev_idx = headers.index('EV TOT') if 'EV TOT' in headers else None
+                        pp_idx = headers.index('PP TOT') if 'PP TOT' in headers else None
+                        sh_idx = headers.index('SH TOT') if 'SH TOT' in headers else None
+                        
+                        if shf_idx is not None:
+                            # Extract data from all rows
+                            for tr in probe_table.find_all('tr')[1:]:  # Skip header row
+                                tds = tr.find_all('td')
+                                if not tds:
+                                    continue
+                                
+                                first_cell = tds[0].get_text(strip=True)
+                                
+                                # Check for period rows (first cell is a digit)
+                                if first_cell.isdigit() and int(first_cell) in [1, 2, 3]:
+                                    period = int(first_cell)
+                                    if shf_idx < len(tds):
+                                        shf_val = tds[shf_idx].get_text(strip=True)
+                                        if shf_val.isdigit():
+                                            period_totals[f'period_{period}'] = int(shf_val)
+                                
+                                # Check for total row (first cell is 'TOT')
+                                elif first_cell.upper() == 'TOT':
+                                    if shf_idx < len(tds):
+                                        total_shf = tds[shf_idx].get_text(strip=True)
+                                        if total_shf.isdigit():
+                                            entry['totals']['shifts'] = int(total_shf)
+                                    
+                                    # Also extract other totals
+                                    if toi_idx and toi_idx < len(tds):
+                                        entry['totals']['toi'] = tds[toi_idx].get_text(strip=True)
+                                    if ev_idx and ev_idx < len(tds):
+                                        entry['totals']['ev_toi'] = tds[ev_idx].get_text(strip=True)
+                                    if pp_idx and pp_idx < len(tds):
+                                        entry['totals']['pp_toi'] = tds[pp_idx].get_text(strip=True)
+                                    if sh_idx and sh_idx < len(tds):
+                                        entry['totals']['sh_toi'] = tds[sh_idx].get_text(strip=True)
+                        
+                        # Add period totals to entry
+                        if period_totals:
+                            entry['period_totals'] = period_totals
+
+                data['player_time_on_ice'][team_type].append(entry)
+
         except Exception as e:
             self.logger.error(f"Error parsing time on ice data: {e}")
             data['error'] = str(e)
-        
+
         return data
     
     def consolidate_game_data(self, source_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -1770,7 +3173,8 @@ class HTMLReportParser:
             self.logger.debug(f"Error determining period number: {e}")
             return None
     
-    def _parse_game_header(self, soup: BeautifulSoup) -> Dict[str, Any]:
+    # DUPLICATE METHOD - REMOVED TO USE THE ONE WITH REFERENCE DATA INTEGRATION
+    def _parse_game_header_duplicate(self, soup: BeautifulSoup, file_path: Optional[str] = None) -> Dict[str, Any]:
         """Parse game header section with teams, score, date, and venue."""
         header = {
             'title': '',
@@ -2367,7 +3771,7 @@ class HTMLReportParser:
             self.logger.debug(f"Error extracting star data: {e}")
             return []
     
-    def _parse_roster_data(self, soup: BeautifulSoup) -> Dict[str, Any]:
+    def _parse_roster_data(self, soup: BeautifulSoup, file_path: Optional[str] = None) -> Dict[str, Any]:
         """Parse roster data from RO HTML report with proper structure."""
         roster_data = {
             'report_type': 'RO',

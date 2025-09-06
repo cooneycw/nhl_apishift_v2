@@ -1,0 +1,43 @@
+================================================================================
+NHL DATA RECONCILIATION REVIEW REPORT
+================================================================================
+Game ID: 2024021130
+Season: 20242025
+Analysis Date: 2025-09-01T16:29:27.775585
+
+DATA SOURCES SUMMARY
+----------------------------------------
+  gamecenter_landing: Available
+
+PENALTY RECONCILIATION ANALYSIS
+----------------------------------------
+Penalty Counts by Source:
+  gamecenter_landing: 0
+
+No reconciliation discrepancies found.
+
+Data Quality Assessment:
+  Overall Score: 0.0%
+  gamecenter_landing: missing
+
+RECONCILIATION ISSUES
+----------------------------------------
+  1. Missing Data Source
+     Description: Missing data sources: ['boxscore', 'playbyplay', 'parsed_html']
+     Severity: high
+     Impact: Incomplete reconciliation analysis
+
+RECOMMENDATIONS
+----------------------------------------
+  1. Improve data extraction
+     Priority: medium
+     Description: Enhance HTML parsing to capture more complete penalty data
+
+  2. Establish data validation rules
+     Priority: low
+     Description: Create automated checks for penalty data consistency
+     Benefit: Prevent future reconciliation issues
+
+================================================================================
+END OF REPORT
+================================================================================
