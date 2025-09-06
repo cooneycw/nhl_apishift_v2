@@ -190,6 +190,28 @@ class NHLJSONCollector:
         """Collect shift charts data for a specific game."""
         return self.shift_charts_collector.collect_shift_chart_for_game(season, game_id)
     
+    def collect_gamecenter_landing(self, game_id: int, season: str) -> bool:
+        """Collect gamecenter landing data for a specific game."""
+        try:
+            url = self.config.get_endpoint("gamecenter_landing", game_id=game_id)
+            data = self._make_request(url)
+            
+            if data:
+                filepath = self.config.get_gamecenter_landing_file_path(season, game_id)
+                success = self.save_json_data(data, filepath)
+                if success:
+                    self.logger.info(f"✅ Gamecenter landing for game {game_id}")
+                    return True
+                else:
+                    self.logger.error(f"❌ Failed to save gamecenter landing for game {game_id}")
+                    return False
+            else:
+                self.logger.error(f"❌ Failed to fetch gamecenter landing for game {game_id}")
+                return False
+        except Exception as e:
+            self.logger.error(f"❌ Error collecting gamecenter landing for game {game_id}: {e}")
+            return False
+    
     def collect_team_data(self, season: str) -> bool:
         """Collect team data for a season."""
         try:
@@ -224,12 +246,36 @@ class NHLJSONCollector:
             return False
     
     def collect_games_data(self, season: str) -> bool:
-        """Collect games schedule data for a season."""
+        """Collect games schedule data for a season using the existing DataCollector."""
         try:
-            # This would need to be implemented based on available schedule endpoints
-            # For now, we'll use a placeholder
-            self.logger.info(f"ℹ️  Games data collection not yet implemented for season {season}")
+            self.logger.info(f"🔄 Collecting games data for season {season}")
+            
+            # Use the existing working DataCollector
+            from src.collect.data_collector import DataCollector
+            data_collector = DataCollector(self.config)
+            
+            # First collect teams data
+            teams_data = data_collector.collect_teams()
+            if not teams_data:
+                self.logger.error(f"❌ Failed to collect teams data for season {season}")
+                return False
+            
+            # Collect games using the working method
+            games_data = data_collector.collect_games_for_season(season, teams_data)
+            if not games_data:
+                self.logger.error(f"❌ Failed to collect games data for season {season}")
+                return False
+            
+            # Save games data
+            games_file = self.config.get_season_file_path(season, "games")
+            os.makedirs(os.path.dirname(games_file), exist_ok=True)
+            
+            with open(games_file, 'w', encoding='utf-8') as f:
+                json.dump(games_data, f, indent=2, ensure_ascii=False)
+            
+            self.logger.info(f"✅ Saved {len(games_data)} games to {games_file}")
             return True
+            
         except Exception as e:
             self.logger.error(f"❌ Error collecting games data for season {season}: {e}")
             return False
@@ -239,7 +285,8 @@ class NHLJSONCollector:
         results = {
             'boxscore': False,
             'playbyplay': False,
-            'shift_charts': False
+            'shift_charts': False,
+            'gamecenter_landing': False
         }
         
         # Collect boxscore
@@ -250,6 +297,9 @@ class NHLJSONCollector:
         
         # Collect shift charts
         results['shift_charts'] = self.collect_shift_charts(game_id, season)
+        
+        # Collect gamecenter landing
+        results['gamecenter_landing'] = self.collect_gamecenter_landing(game_id, season)
         
         return results
     
@@ -271,23 +321,49 @@ class NHLJSONCollector:
         # Collect game-level data
         self.logger.info("📊 Collecting game-level data...")
         game_results = {
-            'boxscores': {'successful': 0, 'failed': 0},
-            'playbyplay': {'successful': 0, 'failed': 0},
-            'shift_charts': {'successful': 0, 'failed': 0}
+            'game_level': {
+                'boxscore': {'successful': 0, 'failed': 0},
+                'gamecenter_landing': {'successful': 0, 'failed': 0}
+            },
+            'shift_level': {
+                'playbyplay': {'successful': 0, 'failed': 0},
+                'shift_charts': {'successful': 0, 'failed': 0}
+            }
         }
         
         for i, game in enumerate(regular_games, 1):
             game_id = game['id']
-            self.logger.info(f"📊 Processing game {i}/{len(regular_games)}: {game_id}")
+            
+            # Show progress every 100 games
+            if i % 100 == 0 or i == 1:
+                self.logger.info(f"📊 Processing game {i}/{len(regular_games)}: {game_id}")
             
             results = self.collect_all_for_game(game_id, season)
             
-            # Update counters
+            # Update counters for nested structure
             for data_type, success in results.items():
-                if success:
-                    game_results[data_type]['successful'] += 1
-                else:
-                    game_results[data_type]['failed'] += 1
+                if data_type in ['boxscore', 'gamecenter_landing']:
+                    if success:
+                        game_results['game_level'][data_type]['successful'] += 1
+                    else:
+                        game_results['game_level'][data_type]['failed'] += 1
+                elif data_type in ['playbyplay', 'shift_charts']:
+                    if success:
+                        game_results['shift_level'][data_type]['successful'] += 1
+                    else:
+                        game_results['shift_level'][data_type]['failed'] += 1
+            
+            # Show progress summary every 100 games
+            if i % 100 == 0:
+                self.logger.info(f"📈 Progress: {i}/{len(regular_games)} games processed")
+                for data_type, counts in game_results['game_level'].items():
+                    total = counts['successful'] + counts['failed']
+                    success_rate = round((counts['successful'] / total) * 100, 1) if total > 0 else 0
+                    self.logger.info(f"   {data_type.title()}: {counts['successful']}/{total} ({success_rate}% success)")
+                for data_type, counts in game_results['shift_level'].items():
+                    total = counts['successful'] + counts['failed']
+                    success_rate = round((counts['successful'] / total) * 100, 1) if total > 0 else 0
+                    self.logger.info(f"   {data_type.title()}: {counts['successful']}/{total} ({success_rate}% success)")
         
         # Final summary
         self.logger.info(f"\n{'='*60}")
@@ -300,10 +376,16 @@ class NHLJSONCollector:
         self.logger.info(f"   Games: {'✅' if games_success else '❌'}")
         
         self.logger.info(f"📊 Game-level data:")
-        for data_type, counts in game_results.items():
+        for data_type, counts in game_results['game_level'].items():
             total = counts['successful'] + counts['failed']
             success_rate = round((counts['successful'] / total) * 100, 1) if total > 0 else 0
-            self.logger.info(f"   {data_type.title()}: {counts['successful']}/{total} ({success_rate}%)")
+            self.logger.info(f"   {data_type.title()}: {counts['successful']}/{total} ({success_rate}% success)")
+        
+        self.logger.info(f"📊 Shift-level data:")
+        for data_type, counts in game_results['shift_level'].items():
+            total = counts['successful'] + counts['failed']
+            success_rate = round((counts['successful'] / total) * 100, 1) if total > 0 else 0
+            self.logger.info(f"   {data_type.title()}: {counts['successful']}/{total} ({success_rate}% success)")
         
         self.logger.info(f"🌐 Overall API success rate: {self.get_api_success_rate()}%")
         

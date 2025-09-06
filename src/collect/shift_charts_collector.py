@@ -159,15 +159,164 @@ class ShiftChartsCollector:
             self.logger.error(f"Error saving shift chart: {e}")
             return False
     
+    def save_curated_shift_data(self, season: str, game_id: int, raw_data: Dict[str, Any]) -> bool:
+        """Extract and save curated shift data following established JSON patterns."""
+        try:
+            if not raw_data or 'data' not in raw_data:
+                self.logger.warning(f"No shift data found for game {game_id}")
+                return False
+            
+            # Extract and structure shift data
+            curated_data = self.extract_shift_data(raw_data['data'], game_id)
+            
+            # Create curated directory following established pattern
+            curated_dir = Path(self.config.storage_root) / season / 'json' / 'curate' / 'sc'
+            curated_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Save curated shift data
+            curated_file = curated_dir / f'sc_{game_id}.json'
+            with open(curated_file, 'w', encoding='utf-8') as f:
+                json.dump(curated_data, f, indent=2, ensure_ascii=False)
+            
+            self.logger.debug(f"Saved curated shift data: {curated_file}")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Error saving curated shift data for game {game_id}: {e}")
+            return False
+    
+    def extract_shift_data(self, shift_entries: List[Dict[str, Any]], game_id: int) -> Dict[str, Any]:
+        """Extract and structure shift data following established patterns."""
+        from datetime import datetime
+        
+        # Initialize curated data structure
+        curated_data = {
+            'game_id': game_id,
+            'extraction_timestamp': datetime.now().isoformat(),
+            'data_source': 'nhl_api_shiftcharts',
+            'total_shifts': len(shift_entries),
+            'shifts': [],
+            'player_summaries': {},
+            'team_summaries': {},
+            'period_summaries': {}
+        }
+        
+        # Process each shift entry
+        for shift in shift_entries:
+            # Extract basic shift information
+            shift_data = {
+                'shift_id': shift.get('id'),
+                'player_id': shift.get('playerId'),
+                'player_name': f"{shift.get('firstName', '')} {shift.get('lastName', '')}".strip(),
+                'team_id': shift.get('teamId'),
+                'team_abbrev': shift.get('teamAbbrev'),
+                'team_name': shift.get('teamName'),
+                'period': shift.get('period'),
+                'shift_number': shift.get('shiftNumber'),
+                'start_time': shift.get('startTime'),
+                'end_time': shift.get('endTime'),
+                'duration': shift.get('duration'),
+                'event_number': shift.get('eventNumber'),
+                'event_description': shift.get('eventDescription'),
+                'event_details': shift.get('eventDetails'),
+                'type_code': shift.get('typeCode'),
+                'detail_code': shift.get('detailCode'),
+                'hex_value': shift.get('hexValue')
+            }
+            
+            curated_data['shifts'].append(shift_data)
+            
+            # Update player summary
+            player_id = shift.get('playerId')
+            if player_id:
+                if player_id not in curated_data['player_summaries']:
+                    curated_data['player_summaries'][player_id] = {
+                        'player_id': player_id,
+                        'player_name': shift_data['player_name'],
+                        'team_abbrev': shift.get('teamAbbrev'),
+                        'total_shifts': 0,
+                        'total_time': 0,
+                        'periods': set()
+                    }
+                
+                summary = curated_data['player_summaries'][player_id]
+                summary['total_shifts'] += 1
+                summary['periods'].add(shift.get('period'))
+                
+                # Parse duration (format: "MM:SS")
+                duration = shift.get('duration', '0:00')
+                try:
+                    minutes, seconds = map(int, duration.split(':'))
+                    total_seconds = minutes * 60 + seconds
+                    summary['total_time'] += total_seconds
+                except (ValueError, AttributeError):
+                    pass
+            
+            # Update team summary
+            team_abbrev = shift.get('teamAbbrev')
+            if team_abbrev:
+                if team_abbrev not in curated_data['team_summaries']:
+                    curated_data['team_summaries'][team_abbrev] = {
+                        'team_abbrev': team_abbrev,
+                        'team_name': shift.get('teamName'),
+                        'total_shifts': 0,
+                        'unique_players': set()
+                    }
+                
+                team_summary = curated_data['team_summaries'][team_abbrev]
+                team_summary['total_shifts'] += 1
+                if player_id:
+                    team_summary['unique_players'].add(player_id)
+            
+            # Update period summary
+            period = shift.get('period')
+            if period:
+                if period not in curated_data['period_summaries']:
+                    curated_data['period_summaries'][period] = {
+                        'period': period,
+                        'total_shifts': 0,
+                        'teams': set()
+                    }
+                
+                period_summary = curated_data['period_summaries'][period]
+                period_summary['total_shifts'] += 1
+                if team_abbrev:
+                    period_summary['teams'].add(team_abbrev)
+        
+        # Convert sets to lists for JSON serialization
+        for player_id, summary in curated_data['player_summaries'].items():
+            summary['periods'] = sorted(list(summary['periods']))
+            # Convert total_time back to MM:SS format
+            total_seconds = summary['total_time']
+            minutes = total_seconds // 60
+            seconds = total_seconds % 60
+            summary['total_time_formatted'] = f"{minutes}:{seconds:02d}"
+        
+        for team_abbrev, summary in curated_data['team_summaries'].items():
+            summary['unique_players'] = list(summary['unique_players'])
+            summary['unique_player_count'] = len(summary['unique_players'])
+        
+        for period, summary in curated_data['period_summaries'].items():
+            summary['teams'] = list(summary['teams'])
+        
+        return curated_data
+    
     def collect_shift_chart_for_game(self, season: str, game_id: int) -> bool:
         """Collect shift chart JSON data for a specific game."""
         try:
             data = self.fetch_shift_chart(game_id)
             if data:
+                # Save raw shift chart data
                 success = self.save_shift_chart(season, game_id, data)
                 if success:
-                    self.logger.info(f"✅ Shift chart for game {game_id}")
-                    return True
+                    # Extract and save curated shift data
+                    curated_success = self.save_curated_shift_data(season, game_id, data)
+                    if curated_success:
+                        self.logger.info(f"✅ Shift chart and curated data for game {game_id}")
+                        return True
+                    else:
+                        self.logger.warning(f"⚠️ Shift chart saved but curated data failed for game {game_id}")
+                        return True  # Still consider it successful since raw data was saved
                 else:
                     self.logger.error(f"❌ Failed to save shift chart for game {game_id}")
                     self.failed_charts.append(game_id)
