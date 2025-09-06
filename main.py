@@ -34,8 +34,7 @@ from typing import List, Dict, Any, Optional
 
 # Import components from new structure
 from config.nhl_config import NHLConfig, create_default_config
-from config.config import EnhancedConfig
-from src.collect.data_collector import DataCollector
+from src.collect.collect_json import NHLJSONCollector
 from src.collect.html_collector import HTMLReportCollector
 from src.utils.storage import CSVStorageManager
 from src.utils.validator import DataValidator
@@ -54,7 +53,7 @@ class NHLDataRetrievalSystem:
     PROCESSING_STEPS = [
         'step_01_collect_json',
         'step_02_collect_html', 
-        'step_03_curate',
+        'step_03_curate',  # Now includes HTML parsing
         'step_04_validate',
         'step_05_transform',
         'step_06_export'
@@ -64,7 +63,7 @@ class NHLDataRetrievalSystem:
     STEP_DEPENDENCIES = {
         'step_01_collect_json': [],
         'step_02_collect_html': ['step_01_collect_json'],
-        'step_03_curate': ['step_01_collect_json'],
+        'step_03_curate': [],  # Can run independently if data files exist
         'step_04_validate': ['step_03_curate'],
         'step_05_transform': ['step_04_validate'],
         'step_06_export': ['step_05_transform']
@@ -77,31 +76,30 @@ class NHLDataRetrievalSystem:
         Args:
             config: Configuration dictionary with system parameters, or None for default
         """
-        # Create enhanced configuration
+        # Create configuration
         if config is None:
-            self.enhanced_config = create_default_config()
+            self.config_dict = create_default_config()
         else:
-            self.enhanced_config = EnhancedConfig(config)
+            self.config_dict = config
         
-        # Create NHLapiV3 compatible config
-        nhlapi_config_dict = self.enhanced_config.get_nhlapi_config_dict()
-        self.config = NHLConfig(nhlapi_config_dict)
+        # Create NHL config
+        self.config = NHLConfig(self.config_dict)
         
         # Setup logging
         self.logger = self._setup_logging()
         
         # Initialize components
-        self.storage_manager = CSVStorageManager(self.enhanced_config)
-        self.data_collector = DataCollector(self.enhanced_config)
-        self.html_collector = HTMLReportCollector(self.enhanced_config)
-        self.validator = DataValidator(self.enhanced_config)
+        self.storage_manager = CSVStorageManager(self.config)
+        self.data_collector = NHLJSONCollector(self.config)
+        self.html_collector = HTMLReportCollector(self.config)
+        self.validator = DataValidator(self.config)
         
         # Create storage directories
-        self.enhanced_config.create_storage_directories()
+        self.config.create_storage_directories()
         
         # Get configuration values
-        self.season_count = self.enhanced_config.season_count
-        self.default_season = self.enhanced_config.default_season
+        self.season_count = self.config.season_count
+        self.default_season = self.config.default_season
         
         # Track completed steps for dependency management
         self.completed_steps = set()
@@ -128,6 +126,30 @@ class NHLDataRetrievalSystem:
         
         return logger
     
+    def get_available_seasons_from_storage(self) -> List[str]:
+        """
+        Get the list of seasons available in storage (from collected data).
+        
+        Returns:
+            List of season identifiers found in storage
+        """
+        available_seasons = []
+        storage_path = Path(self.config.storage_root)
+        
+        if storage_path.exists():
+            # Look for season directories
+            for item in storage_path.iterdir():
+                if item.is_dir() and item.name.isdigit() and len(item.name) == 8:
+                    # Check if it has data (JSON or HTML)
+                    json_dir = item / "json"
+                    html_dir = item / "html"
+                    if json_dir.exists() or html_dir.exists():
+                        available_seasons.append(item.name)
+        
+        # Sort seasons (most recent first)
+        available_seasons.sort(reverse=True)
+        return available_seasons
+    
     def get_selected_seasons(self) -> List[str]:
         """
         Get the list of seasons to process.
@@ -135,26 +157,34 @@ class NHLDataRetrievalSystem:
         Returns:
             List of season identifiers (e.g., ['20242025', '20232024', ...])
         """
-        # Get all available seasons
-        seasons_data = self.data_collector.get_all_seasons()
+        # First try to get seasons from storage
+        available_seasons = self.get_available_seasons_from_storage()
         
-        if not seasons_data:
-            self.logger.warning("No seasons data available, using default seasons")
-            # Fallback to hardcoded recent seasons
-            current_year = datetime.now().year
-            seasons = []
-            for i in range(self.season_count):
-                year = current_year - i
-                season_id = f"{year}{year+1}"
-                seasons.append(season_id)
-            return seasons
+        if available_seasons:
+            self.logger.info(f"Found {len(available_seasons)} seasons in storage: {', '.join(available_seasons)}")
+            return available_seasons
         
-        # Sort seasons by ID (newest first) and take the most recent ones
-        sorted_seasons = sorted(seasons_data, key=lambda x: x.get('id', 0), reverse=True)
-        selected_seasons = [str(season['id']) for season in sorted_seasons[:self.season_count]]
+        # Fallback to API if no seasons in storage
+        try:
+            seasons_data = self.data_collector.get_all_seasons()
+            if seasons_data:
+                seasons = [season.get('id') for season in seasons_data if season.get('id')]
+                seasons.sort(reverse=True)
+                selected_seasons = seasons[:self.season_count]
+                self.logger.info(f"Selected {len(selected_seasons)} seasons from API: {', '.join(selected_seasons)}")
+                return selected_seasons
+        except Exception as e:
+            self.logger.warning(f"Could not get seasons from API: {e}")
         
-        self.logger.info(f"Selected {len(selected_seasons)} seasons: {', '.join(selected_seasons)}")
-        return selected_seasons
+        # Final fallback to hardcoded recent seasons
+        self.logger.warning("No seasons data available, using default seasons")
+        current_year = datetime.now().year
+        seasons = []
+        for i in range(self.season_count):
+            year = current_year - i
+            season_id = f"{year}{year+1}"
+            seasons.append(season_id)
+        return seasons
     
     def full_update(self, seasons: Optional[List[str]] = None) -> None:
         """
@@ -218,6 +248,9 @@ class NHLDataRetrievalSystem:
         """
         if seasons is None:
             seasons = self.current_seasons or self.get_selected_seasons()
+        else:
+            # Use the explicitly provided seasons
+            self.current_seasons = seasons
             
         # Check dependencies
         if not self._check_step_dependencies(step_name):
@@ -248,6 +281,15 @@ class NHLDataRetrievalSystem:
             True if all dependencies are satisfied
         """
         required_deps = self.STEP_DEPENDENCIES.get(step_name, [])
+        
+        # Special case: Curation can run if data files exist, even without dependencies
+        if step_name == 'step_03_curate':
+            # Check if HTML files exist for any of the current seasons
+            for season in self.current_seasons:
+                html_dir = Path(self.config.storage_root) / season / "html" / "reports"
+                if html_dir.exists() and list(html_dir.glob("GS*.HTM")):
+                    return True  # HTML files exist, can run curation
+        
         return all(dep in self.completed_steps for dep in required_deps)
     
     def step_01_collect_json(self, seasons: List[str], full_update: bool = False) -> Dict[str, Any]:
@@ -268,24 +310,31 @@ class NHLDataRetrievalSystem:
         self.config.reload_teams = full_update
         self.config.reload_games = full_update
         self.config.reload_boxscores = full_update
+        self.config.reload_gamecenter_landing = full_update
         self.config.reload_players = full_update
         self.config.reload_playernames = full_update
         self.config.reload_playbyplay = full_update
         self.config.reload_rosters = full_update
         
-        results = {}
-        
         try:
-            # Use existing collection functions from NHLapiV3
-            results['seasons'] = get_season_data(self.config)
-            results['teams'] = get_team_list(self.config)
-            results['games'] = get_game_list(self.config)
-            results['boxscores'] = get_boxscore_list(self.config)
-            results['player_names'] = get_player_names(self.config)
-            results['playbyplay'] = get_playbyplay_data(self.config)
+            # Collect JSON data using the data collector
+            results = {}
             
-            # Store JSON data in CSV format for human readability
-            self.storage_manager.save_json_data_as_csv(results, seasons)
+            # Collect team data
+            self.logger.info("Collecting team data...")
+            results['teams'] = self.data_collector.collect_team_data(seasons[0])
+            
+            # Collect games data
+            self.logger.info("Collecting games data...")
+            results['games'] = self.data_collector.collect_games_data(seasons[0])
+            
+            # Collect game-level and shift-level data for each game
+            self.logger.info("Collecting game-level and shift-level data...")
+            from src.collect.collect_json import load_games_data
+            games = load_games_data(seasons[0])
+            if games:
+                game_results = self.data_collector.collect_all_for_season(seasons[0], games)
+                results['game_collection'] = game_results
             
             self.logger.info("Step 1: JSON data collection completed successfully")
             
@@ -367,7 +416,7 @@ class NHLDataRetrievalSystem:
     
     def step_03_curate(self, seasons: List[str], full_update: bool = False) -> Dict[str, Any]:
         """
-        Step 3: Curate and process collected data.
+        Step 3: Curate data by parsing HTML reports and extracting comprehensive game data.
         
         Args:
             seasons: List of season identifiers
@@ -376,7 +425,175 @@ class NHLDataRetrievalSystem:
         Returns:
             Dictionary containing curation results
         """
-        self.logger.info("Step 3: Curating and processing collected data...")
+        self.logger.info("Step 3: Curating data by parsing HTML reports...")
+        
+        results = {
+            'seasons_processed': [],
+            'games_processed': 0,
+            'total_penalties_parsed': 0,
+            'complex_scenarios_found': 0,
+            'parsing_errors': []
+        }
+        
+        try:
+            # Import the HTML penalty parser
+            from src.parse.html_penalty_parser import HTMLPenaltyParser
+            
+            parser = HTMLPenaltyParser(self.config)
+            
+            for season in seasons:
+                self.logger.info(f"Processing HTML penalties for season {season}")
+                season_results = {
+                    'season': season,
+                    'games_processed': 0,
+                    'penalties_parsed': 0,
+                    'complex_scenarios': 0,
+                    'parsing_errors': []
+                }
+                
+                # Get HTML directory for this season
+                html_dir = Path(self.config.storage_root) / season / "html" / "reports"
+                if not html_dir.exists():
+                    self.logger.warning(f"HTML directory not found for season {season}")
+                    continue
+                
+                # Determine which games to process
+                game_ids = set()
+                # If specific games were provided via CLI, honor them (strip season prefix if present)
+                cli_games = getattr(self, 'cli_games', None)
+                if cli_games:
+                    for gid in cli_games:
+                        gid_str = str(gid)
+                        # Accept both 10-digit (e.g., 2024021036) and 6-digit forms (e.g., 021036)
+                        if len(gid_str) == 10 and gid_str.startswith(season):
+                            game_ids.add(gid_str[-6:])
+                        elif len(gid_str) == 6:
+                            game_ids.add(gid_str)
+                else:
+                    # Otherwise, get list of available games from HTML files
+                    html_files = list(html_dir.glob("GS*.HTM"))
+                    for html_file in html_files:
+                        # Extract game ID from filename (GS020489.HTM -> 020489)
+                        game_id = html_file.stem[2:]  # Remove 'GS' prefix
+                        game_ids.add(game_id)
+                
+                for game_id in game_ids:
+                    try:
+                        self.logger.debug(f"Curating GS report for game {game_id}")
+
+                        # Parse the GS report (Game Summary) only for curated GS output
+                        gs_file = html_dir / 'GS' / f'GS{game_id}.HTM'
+                        if not gs_file.exists():
+                            self.logger.warning(f"GS report not found for game {game_id}")
+                            continue
+
+                        gs_data = parser.parse_report_data(gs_file, 'GS')
+
+                        # Save curated GS JSON under json/curate/gs
+                        gs_out_dir = Path(self.config.storage_root) / season / 'json' / 'curate' / 'gs'
+                        gs_out_dir.mkdir(parents=True, exist_ok=True)
+                        gs_out_file = gs_out_dir / f'gs_{game_id}.json'
+                        with open(gs_out_file, 'w') as f:
+                            json.dump(gs_data, f, indent=2)
+
+                        season_results['games_processed'] += 1
+                        results['games_processed'] += 1
+                        
+                    except Exception as e:
+                        error_msg = f"Error parsing penalties for game {game_id}: {e}"
+                        season_results['parsing_errors'].append(error_msg)
+                        results['parsing_errors'].append(error_msg)
+                        self.logger.error(error_msg)
+                
+                results['seasons_processed'].append(season_results)
+                self.logger.info(f"Season {season}: {season_results['games_processed']} GS reports curated")
+        
+            self.logger.info(f"Step 3: GS curation completed. Total games curated: {results['games_processed']}")
+            
+        except Exception as e:
+            self.logger.error(f"Error in step_03_curate: {e}")
+            raise
+            
+        return results
+    
+    def detect_complex_penalty_scenarios(self, penalties: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Detect complex penalty scenarios from penalty data.
+        
+        Args:
+            penalties: List of penalty dictionaries
+            
+        Returns:
+            List of detected complex scenarios
+        """
+        scenarios = []
+        
+        try:
+            # 1. Simultaneous penalties (same time, multiple teams)
+            time_groups = {}
+            for penalty in penalties:
+                time = penalty.get('time', '')
+                if time not in time_groups:
+                    time_groups[time] = []
+                time_groups[time].append(penalty)
+            
+            for time, time_penalties in time_groups.items():
+                if len(time_penalties) > 1:
+                    teams = set(p.get('team', '') for p in time_penalties)
+                    if len(teams) > 1:
+                        scenarios.append({
+                            'type': 'simultaneous_penalties',
+                            'time': time,
+                            'penalties': time_penalties,
+                            'description': f'Multiple penalties at {time} to different teams',
+                            'impact': '4-on-4 even strength (no power play)'
+                        })
+                    else:
+                        scenarios.append({
+                            'type': 'multiple_team_penalties',
+                            'time': time,
+                            'penalties': time_penalties,
+                            'description': f'Multiple penalties at {time} to same team',
+                            'impact': 'Extended power play for opponent'
+                        })
+            
+            # 2. Team penalties (no specific player)
+            team_penalties = [p for p in penalties if not p.get('player') or p.get('penalty_type') == 'BEN']
+            if team_penalties:
+                scenarios.append({
+                    'type': 'team_penalties',
+                    'penalties': team_penalties,
+                    'description': 'Penalties without specific player assignment',
+                    'impact': 'Penalty served by designated player, affects team statistics'
+                })
+            
+            # 3. Non-power play penalties
+            non_pp_penalties = [p for p in penalties if not p.get('is_power_play', True)]
+            if non_pp_penalties:
+                scenarios.append({
+                    'type': 'non_power_play_penalties',
+                    'penalties': non_pp_penalties,
+                    'description': 'Penalties that do not lead to power plays',
+                    'impact': 'No numerical advantage, different statistical treatment'
+                })
+                
+        except Exception as e:
+            self.logger.error(f"Error detecting complex penalty scenarios: {e}")
+        
+        return scenarios
+    
+    def step_04_validate(self, seasons: List[str], full_update: bool = False) -> Dict[str, Any]:
+        """
+        Step 4: Validate curated data for quality and consistency.
+        
+        Args:
+            seasons: List of season identifiers
+            full_update: Whether this is a full update (revalidates all data)
+            
+        Returns:
+            Dictionary containing validation results
+        """
+        self.logger.info("Step 4: Validating curated data...")
         
         results = {
             'seasons_processed': [],
@@ -712,6 +929,13 @@ def main():
                 'step_04_validate', 'step_05_transform', 'step_06_export'],
         help='Multiple specific steps to execute in sequence (only used with --mode step)'
     )
+
+    # Optional: restrict to specific game IDs when curating
+    parser.add_argument(
+        '--games',
+        nargs='+',
+        help='Optional list of game IDs to process (e.g., 2024021036). Applies to curate/validate steps.'
+    )
     
     parser.add_argument(
         '--seasons',
@@ -761,17 +985,19 @@ def main():
         'season_count': args.season_count,
         'default_season': args.default_season,
         'max_workers': args.max_workers,
-        'delete_files': False,
-        'reload_seasons': False,
-        'reload_teams': False,
-        'reload_games': False,
         'update_game_statuses': True,
-        'reload_boxscores': False,
-        'reload_players': False,
-        'reload_playernames': False,
-        'reload_playbyplay': False,
-        'reload_rosters': False,
-        'reload_curate': False,
+        
+        # Current working collectors
+        'collect_json': True,  # Includes boxscores, playbyplay, shift charts
+        'collect_html': False,  # Not implemented yet
+        'curate': False,        # Not implemented yet
+        
+        # Shift charts specific config
+        'shift_charts': {
+            'enabled': True,
+            'rate_limit_delay': 1.0,
+            'max_retries': 3
+        }
     }
     
     # Initialize system
@@ -787,17 +1013,59 @@ def main():
         elif args.mode == 'incremental':
             system.incremental_update(args.seasons)
         elif args.mode == 'step':
+            # Handle season selection for step mode
+            if args.seasons:
+                # Use explicitly provided seasons
+                selected_seasons = args.seasons
+            else:
+                # Auto-detect available seasons from storage
+                available_seasons = system.get_available_seasons_from_storage()
+                
+                if not available_seasons:
+                    print("No seasons found in storage. Please specify seasons with --seasons or collect data first.")
+                    sys.exit(1)
+                elif len(available_seasons) == 1:
+                    selected_seasons = available_seasons
+                    print(f"Found 1 season in storage: {available_seasons[0]}")
+                    print(f"Using season: {available_seasons[0]}")
+                else:
+                    print(f"Found {len(available_seasons)} seasons in storage:")
+                    for i, season in enumerate(available_seasons, 1):
+                        print(f"  {i}. {season}")
+                    
+                    while True:
+                        try:
+                            choice = input(f"\nSelect season (1-{len(available_seasons)}) or 'all' for all seasons: ").strip()
+                            if choice.lower() == 'all':
+                                selected_seasons = available_seasons
+                                break
+                            else:
+                                choice_num = int(choice)
+                                if 1 <= choice_num <= len(available_seasons):
+                                    selected_seasons = [available_seasons[choice_num - 1]]
+                                    break
+                                else:
+                                    print(f"Please enter a number between 1 and {len(available_seasons)}")
+                        except ValueError:
+                            print("Please enter a valid number or 'all'")
+                        except KeyboardInterrupt:
+                            print("\nOperation cancelled")
+                            sys.exit(0)
+            
             # Execute specific step(s)
             if args.steps:
                 # Execute multiple steps in sequence
                 for step in args.steps:
-                    result = system.execute_step(step, args.seasons, full_update=False)
+                    result = system.execute_step(step, selected_seasons, full_update=False)
                     print(f"Step {step} completed successfully")
                     if args.verbose:
                         print(f"  Result: {result}")
             elif args.step:
+                # Pass CLI games into system for steps that support game filtering
+                if args.games:
+                    system.cli_games = args.games
                 # Execute single step
-                result = system.execute_step(args.step, args.seasons, full_update=False)
+                result = system.execute_step(args.step, selected_seasons, full_update=False)
                 print(f"Step {args.step} completed successfully")
                 if args.verbose:
                     print(f"  Result: {result}")

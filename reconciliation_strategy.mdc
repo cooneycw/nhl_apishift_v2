@@ -82,6 +82,49 @@ playbyplay/             Time on Ice
    - **Penalties**: Cross-check PIM between sources
    - **Time on Ice**: Verify between boxscores and time-on-ice reports
 
+### Penalty Data Reconciliation
+**Primary Source (enumeration/timing)**: Gamecenter Landing JSON
+**Primary Source (complex details)**: HTML GS (Game Summary) HTM
+**Secondary Sources**: Boxscore PIM data, HTML PL/ES reports, Play-by-Play JSON
+
+**Data Structure Analysis (2024-2025 Season)**:
+- **Gamecenter Landing**: High reliability for counts/timing; authoritative enumeration
+- **GS HTM (Primary for complexity)**: Consolidates team penalties (served by), coincidentals, double minors, majors/misconducts and their grouping
+- **PL/ES HTM**: Detailed event lines to support GS; used for tie-breakers and enrichment
+- **Boxscore PIM**: Player-level minutes for reconciliation of totals
+- **Play-by-Play JSON**: Event/situation codes to validate PP relevance and coincidental logic
+
+**Penalty Types Identified**:
+- **Minor Penalties (2 min)**: tripping, hooking, roughing, high-sticking, slashing, cross-checking, interference, holding
+- **Major Penalties (5 min)**: fighting
+- **Misconduct Penalties (10 min)**: misconduct, unsportsmanlike-conduct
+- **Special Penalties**: high-sticking-double-minor, ps-slash-on-breakaway, too-many-men-on-the-ice
+
+**Complex Penalty Scenarios Identified**:
+- **Simultaneous Penalties**: Multiple penalties at same time (11 occurrences in sample)
+- **Team Penalties**: Bench penalties with `servedBy` field (3 occurrences in sample)
+- **Non-Power Play Penalties**: Fighting, misconducts, team penalties (24 total in sample)
+
+**Reconciliation Strategy**:
+1. **Use Gamecenter Landing for enumeration/timing** of penalty events
+2. **Use GS HTM as primary source for complex details** (served-by, coincidentals, double minors, majors/misconducts)
+3. **Cross-Validate with Boxscore PIM** totals at player level (include served-by minutes)
+4. **Use PL/ES & PBP JSON** to confirm classification and PP relevance via situation codes
+5. **Automated Validation**: Detect count mismatches and PIM discrepancies; flag non-PP penalties
+
+**Key Reconciliation Rules for 100% Accuracy**:
+1. **Simultaneous Penalties Rule**: When both teams receive penalties at the same time, result is even strength (4-on-4), not a power play
+2. **Team Penalty Rule**: Bench penalties must be linked to serving player via `servedBy` field for accurate PIM tracking
+3. **Power Play Calculation Rule**: Only minor penalties result in power plays; majors, misconducts, and fighting do not
+4. **Situation Code Rule**: 1451 = power play, 1551 = even strength
+5. **Penalty Type Classification**: MIN (minor), MAJ (major), BEN (bench), MIS (misconduct), MAT (match)
+ 6. **Double Minor Handling**: GS grouping determines two sequential minors at same timestamp; PP impact based on goal occurrence between minors
+
+**Common Discrepancies Found**:
+- **Count Mismatch**: 13/15 games show penalty count differences between sources
+- **Player Name Variations**: Inconsistent player name formatting across sources
+- **HTML Parsing Challenges**: Prioritize GS HTM extraction; use PL/ES only for gaps
+
 2. **Derived Statistics Validation**
    - **Team Totals**: Sum individual player stats vs. team totals
    - **Game Totals**: Aggregate event data vs. game summaries
@@ -177,6 +220,13 @@ Venue Information        Game Results            Player Rosters
 - **Naming Consistency**: % of entities with consistent names
 - **Relationship Consistency**: % of relationships properly established
 
+### Penalty Data Quality Metrics
+- **Penalty Count Consistency**: % of games with matching penalty counts across sources
+- **Player PIM Validation**: % of players with matching penalty minutes between sources
+- **Penalty Type Coverage**: % of penalty types successfully categorized
+- **Timing Accuracy**: % of penalties with consistent timing across sources
+- **Player Name Resolution**: % of penalty players successfully identified across sources
+
 ## Reconciliation Tools and Methods
 
 ### Automated Reconciliation
@@ -210,6 +260,33 @@ Venue Information        Game Results            Player Rosters
    - Final data validation
    - User acceptance testing
    - Documentation review
+
+### Penalty Data Reconciliation Workflow
+**Step 1: Data Extraction and Validation**
+- Extract penalty enumeration/timing from Gamecenter Landing JSON
+- Extract complex penalty details from GS HTM (served-by, coincidentals, double minors)
+- Validate structure (period, time, team, player, minutes, type, description)
+- Cross-reference with Boxscore PIM for player totals (include served-by)
+
+**Step 2: Discrepancy Detection**
+- Compare penalty counts between Gamecenter Landing and HTML sources
+- Validate penalty minutes per player against Boxscore PIM totals
+- Identify missing or inconsistent penalty data
+
+**Step 3: Data Enrichment**
+- Extract additional context from HTML Play-by-Play reports
+- Standardize player names across all sources
+- Link penalty events with corresponding game events
+
+**Step 4: Quality Assurance**
+- Verify penalty timing consistency with game flow
+- Validate team penalty totals against individual player penalties
+- Ensure penalty descriptions match official NHL penalty codes
+
+**Step 5: Output Generation**
+- Curated GS JSON written to `storage/{season}/json/curate/gs/gs_{gameId}.json`
+- Penalty-specific reconciliation is deferred to a later step using GS + Gamecenter Landing + Boxscore PIM
+- Generate discrepancy reports during reconciliation stage, not during curation
 
 ## Reconciliation Outputs
 
@@ -251,6 +328,12 @@ Venue Information        Game Results            Player Rosters
    - Cross-validate core statistics
    - Implement business rule validation
    - Document discrepancy patterns
+
+3. **Penalty Data Reconciliation**
+   - Implement Gamecenter Landing penalty extraction
+   - Develop Boxscore PIM validation system
+   - Create penalty discrepancy detection algorithms
+   - Establish penalty data quality monitoring
 
 ### Phase 3: Advanced Reconciliation (Weeks 7-10)
 1. **Complex Relationships**

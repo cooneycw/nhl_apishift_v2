@@ -98,6 +98,22 @@ This document outlines the comprehensive strategy for curating NHL data collecte
 ### Phase 4: Data Enrichment
 1. **Derived Metrics**
    - Calculate advanced statistics
+
+### Phase 5: Penalty Data Curation
+1. **Primary Source Processing**
+   - Extract penalty data from Gamecenter Landing JSON files
+   - Validate penalty structure and completeness
+   - Standardize penalty type classifications
+
+2. **Cross-Source Validation**
+   - Validate penalty counts against Boxscore PIM data
+   - Cross-reference with HTML Play-by-Play reports
+   - Implement automated discrepancy detection
+
+3. **Penalty Data Standardization**
+   - Normalize player names across all sources
+   - Standardize penalty descriptions and codes
+   - Create consistent penalty timing formats
    - Generate performance indicators
    - Create composite scores
 
@@ -175,6 +191,11 @@ curated/
    - Link games to teams and players
    - Establish basic relationships
 
+3. **Penalty Data Processing**
+   - Extract penalty data from Gamecenter Landing files
+   - Implement Boxscore PIM validation
+   - Establish penalty data quality baseline
+
 ### Medium Priority (Phase 2)
 1. **HTML Report Integration**
    - Parse and extract HTML report data
@@ -203,6 +224,12 @@ curated/
 - **Completeness**: >95% for required fields
 - **Accuracy**: >99% for validated data
 - **Consistency**: >98% cross-source agreement
+
+### Penalty Data Quality Metrics
+- **Penalty Count Consistency**: >95% of games with matching counts across sources
+- **Player PIM Validation**: >90% of players with matching penalty minutes
+- **Penalty Type Coverage**: 100% of penalty types successfully categorized
+- **Player Name Resolution**: >95% of penalty players successfully identified
 
 ### Performance Metrics
 - **Processing Time**: <30 minutes for full season

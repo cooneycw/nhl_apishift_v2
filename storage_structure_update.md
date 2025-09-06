@@ -26,7 +26,7 @@ storage/
 │   │   ├── SC/            # Shift Chart HTML reports (existing)
 │   │   ├── TV/            # Time on Ice Away reports
 │   │   └── TH/            # Time on Ice Home reports
-│   └── csv/curate/        # Curated data extraction targets
+│   └── json/curate/       # Curated JSON extraction targets
 │       ├── game_summaries/     # Target for GS report extraction
 │       ├── event_summaries/    # Target for ES report extraction
 │       ├── play_by_play/       # Target for PL report extraction
@@ -36,7 +36,8 @@ storage/
 │       ├── shot_summary/       # Target for SS report extraction
 │       ├── time_on_ice_away/   # Target for TV report extraction
 │       ├── time_on_ice_home/   # Target for TH report extraction
-│       └── shift_charts/       # NEW: Target for shift charts JSON processing
+│       ├── shift_charts/       # NEW: Target for shift charts JSON processing
+│       └── gs/                 # NEW: Curated GS JSON (full GS extraction)
 │           ├── player_shifts.csv
 │           ├── team_shifts.csv
 │           └── game_shifts.csv
@@ -194,3 +195,41 @@ for player in game_summary.home_team.player_summaries:
 ```
 
 This structure provides a comprehensive solution for collecting, storing, and analyzing NHL shift charts data while maintaining consistency with your existing project architecture.
+
+---
+
+# Penalties Curation (HTM → Curate)
+
+## Source Prioritization
+
+- Primary for complex penalty details: `GS` (Game Summary) HTM
+  - Rationale: GS consolidates bench minors, serving player, coincidentals, double minors, majors/misconducts
+- Supporting: `PL` (Play-by-Play) and `ES` (Event Summary) HTM for cross-checks
+- Cross-validation: Gamecenter Landing JSON (enumeration/timing), boxscore PIM totals
+
+## Curated Outputs
+
+- Per-game curated penalties JSON
+  - Path: `storage/{season}/csv/curate/penalties/penalties_{gameId}.json`
+  - Contents:
+    - penalties[]: normalized records (period, time, team, player, penalty_type, minutes, served_by, coincidental_group, is_power_play_relevant, notes)
+    - complex_scenarios[]: detected groups (simultaneous, team penalties served, fighting/misconduct)
+    - sources: provenance (GS/PL/ES and reconciliation notes)
+
+- Optional full parsed HTML aggregate (for debugging/enrichment)
+  - Path: `storage/{season}/csv/curate/html_data_{shortGameId}.json`
+
+## Processing Step
+
+- Step: `step_03_curate`
+- Behavior:
+  - Reads HTM reports from `storage/{season}/html/reports/`
+  - Extracts penalties with GS as primary; aligns with PL/ES when needed
+  - Writes curated penalties under `csv/curate/penalties/`
+  - Never writes penalties under `json/` (moved to curate)
+
+## Reconciliation Touchpoints
+
+- Boxscore PIM totals must equal sum of player PIM (including served-by for team penalties)
+- Gamecenter Landing penalty list should align in count/timing; GS used to resolve complex cases
+- Non-PP penalties (fighting, misconducts) flagged and excluded from PP calcs

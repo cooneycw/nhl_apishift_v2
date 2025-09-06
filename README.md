@@ -21,6 +21,7 @@ The NHL API Data Retrieval System provides a complete pipeline for extracting ho
 ### JSON APIs (Primary)
 - **Base URL**: `https://api-web.nhle.com`
 - **Boxscores**: Detailed game statistics
+- **Gamecenter Landing**: Comprehensive game overview and summary data
 - **Play-by-Play**: Complete game events and shifts
 - **Team Data**: Rosters, standings, schedules
 - **Player Data**: Statistics and information
@@ -86,7 +87,14 @@ python main.py --mode step --step step_01_collect_json --seasons 20242025
 # Step 2: Collect HTML reports
 python main.py --mode step --step step_02_collect_html --seasons 20242025
 
-# Step 3: Collect shift charts (Time on Ice data)
+# Step 3: Curate (parse HTML to JSON into csv/curate)
+# Auto-detects seasons from storage if --seasons is omitted
+python main.py --mode step --step step_03_curate
+
+# (Optional) Run only validation
+python main.py --mode step --step step_04_validate --seasons 20242025
+
+# (Optional) Shift charts (Time on Ice) via dedicated collector
 python src/collect/shift_charts_collector.py
 ```
 
@@ -95,6 +103,63 @@ python src/collect/shift_charts_collector.py
 # Check collection status
 python main.py --mode status --seasons 20242025
 ```
+
+### Execution Modes
+
+- **full**: Runs the entire pipeline for the selected seasons in order.
+  - Steps: `step_01_collect_json` → `step_02_collect_html` → `step_03_curate` → `step_04_validate` → `step_05_transform` → `step_06_export`.
+  - Example:
+    ```bash
+    python main.py --mode full --seasons 20242025 --verbose
+    ```
+
+- **incremental**: Runs the core processing stages meant for day-to-day updates.
+  - Steps: `step_01_collect_json` → `step_02_collect_html` → `step_03_curate` → `step_04_validate`.
+  - Example:
+    ```bash
+    python main.py --mode incremental --seasons 20242025
+    ```
+
+- **step**: Executes only the specified step (or list of steps) without running others.
+  - Season selection behavior:
+    - If `--seasons` is provided, those seasons are used.
+    - If `--seasons` is omitted, the system auto-detects seasons from `storage/`:
+      - If exactly one season is found, it is automatically selected and printed to the terminal.
+      - If multiple seasons are found, you’ll be prompted to choose a season (or 'all').
+  - Examples:
+    ```bash
+    # Run only curate (HTML parsing → curated JSON outputs)
+    python main.py --mode step --step step_03_curate
+
+    # Run validate only for a given season
+    python main.py --mode step --step step_04_validate --seasons 20242025
+
+    # Run multiple steps in sequence
+    python main.py --mode step --steps step_03_curate step_04_validate --seasons 20242025
+    ```
+
+- **status**: Prints current data availability and last-updated timestamps for the selected seasons.
+  - Example:
+    ```bash
+    python main.py --mode status --seasons 20242025
+    ```
+
+- **cleanup**: Performs maintenance/cleanup tasks (logs, temp artifacts) if configured.
+  - Example:
+    ```bash
+    python main.py --mode cleanup
+    ```
+
+### Curate Outputs (HTML → JSON)
+
+When running `step_03_curate`, parsed outputs are written to season-scoped folders:
+- Full parsed game data:
+  - `storage/{season}/csv/curate/html_data_{gameId}.json`
+- Penalty-specific extract for reconciliation:
+  - `storage/{season}/json/parsed_penalties/penalties_{gameId}.json`
+
+Curate reads HTM reports from:
+- `storage/{season}/html/reports/{type}/{TYPE}{gameId}.HTM` (e.g., `GS`, `PL`, `ES`, `FS`, `FC`, `RO`, `SS`, `TV`, `TH`)
 
 ## 📁 Project Structure
 
@@ -115,6 +180,7 @@ nhl_apishift_v2/
 │   ├── 20242025/              # 2024-2025 season data (13,123 files)
 │   │   ├── json/              # Raw JSON data from APIs (2,627+ files)
 │   │   │   ├── boxscores/     # Game boxscore data (1,312 files)
+│   │   │   ├── gamecenter_landing/ # Game overview and summary data (1,312 files)
 │   │   │   ├── playbyplay/    # Play-by-play data (1,312 files)
 │   │   │   ├── shiftcharts/   # Shift charts data (206 files)
 │   │   │   ├── games.json     # Season schedule data
@@ -199,6 +265,15 @@ python main.py --mode step --step step_02_collect_html --seasons 20242025
 python collect_shift_charts.py
 ```
 
+**New Data Type**: The system now collects **Gamecenter Landing** data, which provides comprehensive game overviews including:
+- Game state and period information
+- Scoring summaries by period
+- Penalty summaries
+- Three stars of the game
+- TV broadcast information
+- Venue details
+- Shootout data (when applicable)
+
 ### Data Backup
 
 Since data is not tracked in git, consider:
@@ -270,6 +345,7 @@ The system follows a step-based processing approach:
 - Raw API responses for data integrity
 - Organized by season and data type
 - Preserves original data structure
+- **Gamecenter Landing**: Comprehensive game summaries, scoring, penalties, three stars, and venue information
 
 #### CSV (Export)
 - Human-readable format for analysis
