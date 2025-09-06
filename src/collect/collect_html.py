@@ -10,18 +10,19 @@ in the NHL API data structure documentation.
 import logging
 import sys
 import os
+import json
 from typing import Dict, List, Any, Optional
 import time
 
 # Add current directory to path for imports
 sys.path.append(os.path.dirname(__file__))
 
-from html_report_collector import HTMLReportCollector
-from enhanced_storage import CSVStorageManager
-from config import create_default_config, EnhancedConfig
+from .html_collector import HTMLReportCollector
+from ..utils.storage import CSVStorageManager
+from config.nhl_config import create_default_config, NHLConfig
 
 
-def collect_html_reports(config: EnhancedConfig, seasons: List[str], full_update: bool = False) -> Dict[str, Any]:
+def collect_html_reports(config: NHLConfig, seasons: List[str], full_update: bool = False) -> Dict[str, Any]:
     """
     Collect HTML reports from NHL.com.
     
@@ -47,7 +48,7 @@ def collect_html_reports(config: EnhancedConfig, seasons: List[str], full_update
         'reports_collected': 0,
         'reports_failed': 0,
         'seasons_processed': [],
-        'report_types': ['GS', 'ES', 'PL', 'FS', 'FC', 'RO', 'SS', 'TO'],
+        'report_types': ['GS', 'ES', 'PL', 'FS', 'FC', 'RO', 'SS', 'TV', 'TH'],
         'execution_time': {},
         'success': True
     }
@@ -80,17 +81,19 @@ def collect_html_reports(config: EnhancedConfig, seasons: List[str], full_update
                     season_results['games_processed'] += 1
                     
                     # Collect all report types for this game
+                    # Use last 6 digits of game_id for HTML URLs (e.g., 2024020001 -> 020001)
+                    game_id_short = f'{game_id:06d}'[-6:]
+                    
                     for report_type in results['report_types']:
                         try:
                             report_data = html_collector.fetch_html_report(
-                                season, report_type, game_id
+                                season, report_type, game_id_short
                             )
                             
                             if report_data:
-                                # Save the HTML report
-                                storage_manager.save_html_report(
-                                    season, report_type, game_id, report_data
-                                )
+                                # Save the HTML report following the documented storage pattern
+                                # storage/{season}/html/reports/{report_type}/{report_type}{game_id_short}.HTM
+                                save_html_report(season, report_type, game_id_short, report_data)
                                 
                                 season_results['reports_collected'] += 1
                                 results['reports_collected'] += 1
@@ -164,6 +167,37 @@ def collect_html_reports(config: EnhancedConfig, seasons: List[str], full_update
     return results
 
 
+def save_html_report(season: str, report_type: str, game_id_short: str, content: str) -> bool:
+    """
+    Save HTML report to the correct storage location following the documented pattern.
+    
+    Args:
+        season: Season identifier (e.g., '20242025')
+        report_type: Report type code (e.g., 'GS', 'TV', 'TH')
+        game_id_short: Short game ID (e.g., '020001')
+        content: HTML content to save
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    try:
+        # Create directory structure: storage/{season}/html/reports/{report_type}/
+        report_dir = f"storage/{season}/html/reports/{report_type}"
+        os.makedirs(report_dir, exist_ok=True)
+        
+        # Save file with .HTM extension following the pattern: {report_type}{game_id_short}.HTM
+        filename = f"{report_type}{game_id_short}.HTM"
+        filepath = os.path.join(report_dir, filename)
+        
+        with open(filepath, 'w', encoding='utf-8') as f:
+            f.write(content)
+        
+        return True
+    except Exception as e:
+        logger.error(f"Error saving {report_type} report: {e}")
+        return False
+
+
 def _get_games_for_season(season: str, storage_manager: CSVStorageManager) -> List[Dict[str, Any]]:
     """
     Get games for a specific season from collected data.
@@ -176,11 +210,19 @@ def _get_games_for_season(season: str, storage_manager: CSVStorageManager) -> Li
         List of game dictionaries
     """
     try:
-        # Try to load games from CSV storage
-        games_data = storage_manager.load_season_games(season)
-        return games_data if games_data else []
-    except Exception:
-        # Fallback - return empty list, could be enhanced to read from other sources
+        # Load games from JSON file
+        games_file = f"storage/{season}/json/games.json"
+        if os.path.exists(games_file):
+            with open(games_file, 'r', encoding='utf-8') as f:
+                games_data = json.load(f)
+                # Filter for regular season games only (gameType == 2)
+                regular_games = [game for game in games_data if game.get('gameType') == 2]
+                return regular_games
+        else:
+            logger.warning(f"Games file not found: {games_file}")
+            return []
+    except Exception as e:
+        logger.error(f"Error loading games for season {season}: {e}")
         return []
 
 
@@ -193,7 +235,7 @@ def main():
     parser.add_argument('--full-update', action='store_true', help='Force full update')
     parser.add_argument('--verbose', action='store_true', help='Enable verbose logging')
     parser.add_argument('--report-types', nargs='+', 
-                       choices=['GS', 'ES', 'PL', 'FS', 'FC', 'RO', 'SS', 'TO'],
+                       choices=['GS', 'ES', 'PL', 'FS', 'FC', 'RO', 'SS', 'TV', 'TH'],
                        help='Specific report types to collect')
     
     args = parser.parse_args()
@@ -206,7 +248,7 @@ def main():
     
     # Create configuration
     config_dict = create_default_config()
-    config = EnhancedConfig(config_dict)
+    config = NHLConfig(config_dict)
     
     # Use default seasons if none provided
     seasons = args.seasons or ['20242025']

@@ -36,6 +36,7 @@ from typing import List, Dict, Any, Optional
 # Import components from new structure
 from config.nhl_config import NHLConfig, create_default_config
 from src.collect.collect_json import NHLJSONCollector
+from src.collect.data_collector import DataCollector
 from src.collect.html_collector import HTMLReportCollector
 from src.utils.storage import CSVStorageManager
 from src.utils.validator import DataValidator
@@ -91,7 +92,7 @@ class NHLDataRetrievalSystem:
         
         # Initialize components
         self.storage_manager = CSVStorageManager(self.config)
-        self.data_collector = NHLJSONCollector(self.config)
+        self.data_collector = DataCollector(self.config)
         self.html_collector = HTMLReportCollector(self.config)
         self.validator = DataValidator(self.config)
         
@@ -320,24 +321,34 @@ class NHLDataRetrievalSystem:
         try:
             # Collect JSON data using the data collector
             results = {}
+            season = seasons[0]
             
             # Collect team data
             self.logger.info("Collecting team data...")
-            results['teams'] = self.data_collector.collect_team_data(seasons[0])
+            teams = self.data_collector.collect_teams(season)
+            results['teams'] = teams
             
             # Collect games data
             self.logger.info("Collecting games data...")
-            results['games'] = self.data_collector.collect_games_data(seasons[0])
+            games = self.data_collector.collect_games_for_season(season, teams)
+            results['games'] = games
             
-            # Collect game-level and shift-level data for each game
-            self.logger.info("Collecting game-level and shift-level data...")
-            from src.collect.collect_json import load_games_data
-            games = load_games_data(seasons[0])
+            # Collect player data from games
+            self.logger.info("Collecting player data...")
+            players = self.data_collector.collect_players_from_games(season, games)
+            results['players'] = players
+            
+            # Collect game-level data (boxscores and play-by-play)
             if games:
-                game_results = self.data_collector.collect_all_for_season(seasons[0], games)
-                results['game_collection'] = game_results
+                self.logger.info("Collecting boxscore data...")
+                boxscore_count = self.data_collector.collect_boxscores_for_games(season, games)
+                results['boxscores_collected'] = boxscore_count
+                
+                self.logger.info("Collecting play-by-play data...")
+                pbp_count = self.data_collector.collect_playbyplay_for_games(season, games)
+                results['playbyplay_collected'] = pbp_count
             else:
-                self.logger.warning(f"No games data found for season {seasons[0]}. Skipping game-level collection.")
+                self.logger.warning(f"No games data found for season {season}. Skipping game-level collection.")
             
             self.logger.info("Step 1: JSON data collection completed successfully")
             
@@ -479,11 +490,14 @@ class NHLDataRetrievalSystem:
                             game_ids.add(gid_str)
                 else:
                     # Otherwise, get list of available games from HTML files
-                    html_files = list(html_dir.glob("GS*.HTM"))
-                    for html_file in html_files:
-                        # Extract game ID from filename (GS020489.HTM -> 020489)
-                        game_id = html_file.stem[2:]  # Remove 'GS' prefix
-                        game_ids.add(game_id)
+                    # Look in the GS subdirectory for Game Summary files
+                    gs_dir = html_dir / "GS"
+                    if gs_dir.exists():
+                        html_files = list(gs_dir.glob("GS*.HTM"))
+                        for html_file in html_files:
+                            # Extract game ID from filename (GS020489.HTM -> 020489)
+                            game_id = html_file.stem[2:]  # Remove 'GS' prefix
+                            game_ids.add(game_id)
                 
                 for game_id in game_ids:
                     try:

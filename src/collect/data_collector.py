@@ -166,7 +166,7 @@ class DataCollector:
             self.logger.error("Failed to collect season information")
             return []
     
-    def collect_teams(self) -> List[Dict[str, Any]]:
+    def collect_teams(self, season: str = None) -> List[Dict[str, Any]]:
         """
         Collect team information.
         
@@ -202,8 +202,11 @@ class DataCollector:
             
             self.logger.info(f"Collected {len(teams)} teams")
             
-            # Save to file
-            file_path = self.config.file_paths["teams"]
+            # Save to file using season-specific path
+            if season:
+                file_path = os.path.join(self.config.storage_root, season, "json", "teams.json")
+            else:
+                file_path = os.path.join(self.config.storage_root, "teams.json")
             os.makedirs(os.path.dirname(file_path), exist_ok=True)
             with open(file_path, 'w') as f:
                 json.dump(teams, f, indent=2)
