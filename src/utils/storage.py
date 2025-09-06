@@ -389,13 +389,13 @@ class CSVStorageManager:
         self.logger.info(f"Saved {len(events_data)} events to CSV files")
     
     def save_html_report(self, season: str, report_type: str, game_id: str, report_data: str) -> None:
-        """Save HTML report data to file."""
-        # Create season-specific directory
-        season_dir = self.html_storage_path / f"{report_type.lower()}_reports" / season
-        season_dir.mkdir(parents=True, exist_ok=True)
+        """Save HTML report data to file in the correct HTML reports structure."""
+        # Create season-specific directory in HTML reports structure
+        report_dir = Path(self.config.storage_root) / season / "html" / "reports" / report_type
+        report_dir.mkdir(parents=True, exist_ok=True)
         
-        # Save HTML report
-        report_file = season_dir / f"{report_type}{game_id}.html"
+        # Save HTML report with .HTM extension
+        report_file = report_dir / f"{report_type}{game_id}.HTM"
         with open(report_file, 'w', encoding='utf-8') as f:
             f.write(report_data)
         

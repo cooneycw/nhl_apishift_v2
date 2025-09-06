@@ -80,8 +80,10 @@ class HTMLReportCollector:
                 self.logger.warning(f"Empty response for {url}")
                 return None
             
-            # Verify it's HTML content
-            if not response.text.lower().startswith('<html'):
+            # Verify it's HTML content (handle cases with leading comments)
+            response_text_lower = response.text.lower().strip()
+            if not (response_text_lower.startswith('<html') or 
+                    '<html' in response_text_lower[:200]):  # Check first 200 chars for HTML tag
                 self.logger.warning(f"Non-HTML response for {url}")
                 return None
             

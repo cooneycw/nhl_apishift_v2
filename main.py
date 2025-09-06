@@ -284,15 +284,42 @@ class NHLDataRetrievalSystem:
         """
         required_deps = self.STEP_DEPENDENCIES.get(step_name, [])
         
+        # Check if dependencies are satisfied either by completed steps or existing data files
+        for dep in required_deps:
+            # First check if step was completed in this session
+            if dep in self.completed_steps:
+                continue
+                
+            # If not completed in session, check if required data files exist
+            if dep == 'step_01_collect_json':
+                # Check if JSON data files exist for the current seasons
+                json_data_exists = False
+                for season in self.current_seasons:
+                    json_dir = Path(self.config.storage_root) / season / "json"
+                    if json_dir.exists():
+                        # Check for key JSON files that indicate step_01 was completed
+                        games_file = json_dir / "games.json"
+                        teams_file = json_dir / "teams.json"
+                        players_file = json_dir / "players.json"
+                        if games_file.exists() and teams_file.exists() and players_file.exists():
+                            json_data_exists = True
+                            break
+                
+                if not json_data_exists:
+                    return False
+            else:
+                # For other dependencies, require session completion
+                return False
+        
         # Special case: Curation can run if data files exist, even without dependencies
         if step_name == 'step_03_curate':
             # Check if HTML files exist for any of the current seasons
             for season in self.current_seasons:
                 html_dir = Path(self.config.storage_root) / season / "html" / "reports"
-                if html_dir.exists() and list(html_dir.glob("GS*.HTM")):
+                if html_dir.exists() and list(html_dir.glob("GS/GS*.HTM")):
                     return True  # HTML files exist, can run curation
         
-        return all(dep in self.completed_steps for dep in required_deps)
+        return True
     
     def step_01_collect_json(self, seasons: List[str], full_update: bool = False) -> Dict[str, Any]:
         """
@@ -375,7 +402,7 @@ class NHLDataRetrievalSystem:
             'reports_collected': 0,
             'reports_failed': 0,
             'seasons_processed': [],
-            'report_types': ['GS', 'ES', 'PL', 'FS', 'FC', 'RO', 'SS', 'TO']
+            'report_types': ['GS', 'ES', 'PL', 'FS', 'FC', 'RO', 'SS', 'TV', 'TH']
         }
         
         try:
@@ -392,34 +419,84 @@ class NHLDataRetrievalSystem:
                 from src.collect.collect_json import load_games_data
                 season_games = load_games_data(season)
                 
+                # Progress tracking variables
+                total_reports_processed = 0
+                last_progress_report = 0
+                total_expected_reports = len(season_games) * len(results['report_types'])
+                
+                # Count existing files to avoid re-downloading
+                existing_files_count = 0
                 for game in season_games:
-                    game_id = game['id']
+                    full_game_id = game['id']
+                    game_id_short = f'{full_game_id:06d}'[-6:]
+                    for report_type in results['report_types']:
+                        report_file = Path(self.config.storage_root) / season / "html" / "reports" / report_type / f"{report_type}{game_id_short}.HTM"
+                        if report_file.exists():
+                            existing_files_count += 1
+                
+                remaining_reports = total_expected_reports - existing_files_count
+                
+                # Initial progress report
+                self.logger.info(f"🎯 Starting HTML collection for {len(season_games)} games × {len(results['report_types'])} report types = {total_expected_reports} total reports")
+                self.logger.info(f"📁 Found {existing_files_count} existing files, {remaining_reports} reports remaining to download")
+                
+                for game in season_games:
+                    full_game_id = game['id']
+                    # Convert to 6-digit format for HTML reports (e.g., 2024020010 -> 020010)
+                    game_id_short = f'{full_game_id:06d}'[-6:]
                     season_results['games_processed'] += 1
                     
                     # Collect all report types
                     for report_type in results['report_types']:
-                        try:
-                            report_data = self.html_collector.fetch_html_report(
-                                season, report_type, game_id
-                            )
-                            
-                            if report_data:
-                                self.storage_manager.save_html_report(
-                                    season, report_type, game_id, report_data
+                        # Check if file already exists
+                        report_file = Path(self.config.storage_root) / season / "html" / "reports" / report_type / f"{report_type}{game_id_short}.HTM"
+                        
+                        if report_file.exists():
+                            # File already exists, skip download
+                            season_results['reports_collected'] += 1
+                            results['reports_collected'] += 1
+                        else:
+                            # File doesn't exist, download it
+                            try:
+                                report_data = self.html_collector.fetch_html_report(
+                                    season, report_type, game_id_short
                                 )
-                                season_results['reports_collected'] += 1
-                                results['reports_collected'] += 1
-                            else:
+                                
+                                if report_data:
+                                    self.storage_manager.save_html_report(
+                                        season, report_type, game_id_short, report_data
+                                    )
+                                    season_results['reports_collected'] += 1
+                                    results['reports_collected'] += 1
+                                else:
+                                    season_results['reports_failed'] += 1
+                                    results['reports_failed'] += 1
+                                    
+                            except Exception as e:
+                                self.logger.error(f"Error collecting {report_type} report for game {game_id}: {e}")
                                 season_results['reports_failed'] += 1
                                 results['reports_failed'] += 1
-                                
-                        except Exception as e:
-                            self.logger.error(f"Error collecting {report_type} report for game {game_id}: {e}")
-                            season_results['reports_failed'] += 1
-                            results['reports_failed'] += 1
+                        
+                        # Progress reporting every 100 reports
+                        total_reports_processed += 1
+                        if total_reports_processed - last_progress_report >= 100:
+                            success_rate = (results['reports_collected'] / total_reports_processed) * 100 if total_reports_processed > 0 else 0
+                            completion_percentage = (total_reports_processed / total_expected_reports) * 100 if total_expected_reports > 0 else 0
+                            self.logger.info(f"📊 Progress: {total_reports_processed}/{total_expected_reports} reports processed "
+                                           f"({completion_percentage:.1f}% complete) | "
+                                           f"✅ {results['reports_collected']} collected | "
+                                           f"❌ {results['reports_failed']} failed | "
+                                           f"📈 {success_rate:.1f}% success rate")
+                            last_progress_report = total_reports_processed
+                
+                # Final progress report for this season
+                final_success_rate = (results['reports_collected'] / total_reports_processed) * 100 if total_reports_processed > 0 else 0
+                self.logger.info(f"🏁 Season {season} Complete: {total_reports_processed} total reports processed | "
+                               f"✅ {results['reports_collected']} collected | "
+                               f"❌ {results['reports_failed']} failed | "
+                               f"📈 {final_success_rate:.1f}% success rate")
                 
                 results['seasons_processed'].append(season_results)
-                self.logger.info(f"Season {season}: {season_results['reports_collected']} reports collected, {season_results['reports_failed']} failed")
         
             self.logger.info(f"Step 2: HTML report collection completed. Total: {results['reports_collected']} collected, {results['reports_failed']} failed")
             
