@@ -169,10 +169,22 @@ class HTMLReportParser:
         report_types = ['GS', 'PL', 'ES']  # Game Summary, Play-by-Play, Event Summary
         
         for report_type in report_types:
-            html_file = html_dir / f"{report_type}{game_id}.HTM"
+            html_file = html_dir / report_type / f"{report_type}{game_id}.HTM"
             if html_file.exists():
                 try:
-                    penalties = self.parse_report_penalties(html_file, report_type)
+                    # Use the advanced penalty parsing for GS reports
+                    if report_type == 'GS':
+                        # Parse the full report data and extract penalties from it
+                        report_data = self.parse_report_data(html_file, report_type)
+                        penalties_data = report_data.get('penalties', {})
+                        # Extract penalties from by_period structure
+                        penalties = []
+                        for period, period_penalties in penalties_data.get('by_period', {}).items():
+                            penalties.extend(period_penalties)
+                    else:
+                        # Use the existing method for other report types
+                        penalties = self.parse_report_penalties(html_file, report_type)
+                    
                     if penalties:
                         game_penalties['sources'][report_type] = penalties
                         game_penalties['parsing_metadata']['reports_parsed'].append(report_type)
@@ -188,6 +200,116 @@ class HTMLReportParser:
             game_penalties['complex_scenarios'] = self.detect_complex_scenarios(game_penalties['consolidated_penalties'])
         
         return game_penalties
+    
+    def consolidate_penalties(self, sources: Dict[str, List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+        """
+        Consolidate penalties from multiple sources (GS, PL, ES) to create a unified penalty list.
+        
+        Args:
+            sources: Dictionary with report type as key and penalty list as value
+            
+        Returns:
+            List of consolidated penalty dictionaries
+        """
+        consolidated = []
+        penalty_keys = set()
+        
+        try:
+            # Process each source, with GS taking priority for conflicts
+            source_priority = ['GS', 'PL', 'ES']
+            
+            for source_type in source_priority:
+                if source_type in sources:
+                    for penalty in sources[source_type]:
+                        # Create unique key for this penalty
+                        penalty_key = (
+                            penalty.get('penalty_number'),
+                            penalty.get('period'),
+                            penalty.get('time'),
+                            penalty.get('player', {}).get('name'),
+                            penalty.get('penalty_type')
+                        )
+                        
+                        if penalty_key not in penalty_keys:
+                            penalty_keys.add(penalty_key)
+                            # Add source information
+                            penalty['source'] = source_type
+                            consolidated.append(penalty)
+            
+            self.logger.debug(f"Consolidated {len(consolidated)} unique penalties from {len(sources)} sources")
+            
+        except Exception as e:
+            self.logger.error(f"Error consolidating penalties: {e}")
+        
+        return consolidated
+    
+    def detect_complex_scenarios(self, penalties: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Detect complex penalty scenarios from consolidated penalty data.
+        
+        Args:
+            penalties: List of consolidated penalty dictionaries
+            
+        Returns:
+            List of detected complex scenarios
+        """
+        scenarios = []
+        
+        try:
+            # 1. Simultaneous penalties (same time, multiple teams)
+            time_groups = {}
+            for penalty in penalties:
+                time = penalty.get('time', '')
+                if time not in time_groups:
+                    time_groups[time] = []
+                time_groups[time].append(penalty)
+            
+            for time, time_penalties in time_groups.items():
+                if len(time_penalties) > 1:
+                    teams = set(p.get('team', '') for p in time_penalties)
+                    if len(teams) > 1:
+                        scenarios.append({
+                            'type': 'simultaneous_penalties',
+                            'time': time,
+                            'penalties': time_penalties,
+                            'description': f'Multiple penalties at {time} to different teams',
+                            'impact': '4-on-4 even strength (no power play)'
+                        })
+                    else:
+                        scenarios.append({
+                            'type': 'multiple_team_penalties',
+                            'time': time,
+                            'penalties': time_penalties,
+                            'description': f'Multiple penalties at {time} to same team',
+                            'impact': 'Extended power play for opponent'
+                        })
+            
+            # 2. Team penalties (no specific player)
+            team_penalties = [p for p in penalties if not p.get('player') or p.get('penalty_type') == 'BEN']
+            if team_penalties:
+                scenarios.append({
+                    'type': 'team_penalties',
+                    'penalties': team_penalties,
+                    'description': 'Penalties without specific player assignment',
+                    'impact': 'Penalty served by designated player, affects team statistics'
+                })
+            
+            # 3. Non-power play penalties (fighting, misconducts)
+            non_pp_penalties = [p for p in penalties if p.get('penalty_type') in ['Fighting', 'Misconduct', 'Game Misconduct']]
+            if non_pp_penalties:
+                scenarios.append({
+                    'type': 'non_power_play_penalties',
+                    'penalties': non_pp_penalties,
+                    'description': 'Penalties that do not lead to power plays',
+                    'impact': 'No numerical advantage, different statistical treatment'
+                })
+            
+            self.logger.debug(f"Detected {len(scenarios)} complex penalty scenarios")
+                
+        except Exception as e:
+            self.logger.error(f"Error detecting complex penalty scenarios: {e}")
+        
+        return scenarios
     
     def parse_report_data(self, html_file: Path, report_type: str) -> Dict[str, Any]:
         """
@@ -345,6 +467,50 @@ class HTMLReportParser:
         
         return None
 
+    def _lookup_player_id_by_sweater(self, sweater_number: int, player_name: str = "") -> Optional[int]:
+        """
+        Look up player ID using sweater number and player name from reference data.
+        
+        Args:
+            sweater_number: Player sweater number
+            player_name: Player name for additional matching
+            
+        Returns:
+            Player ID if found, None otherwise
+        """
+        try:
+            if not hasattr(self, 'reference_data') or not self.reference_data:
+                return None
+            
+            # Load players data if not already loaded
+            if not hasattr(self, '_players_cache'):
+                self._players_cache = {}
+                players_file = Path(self.storage_path) / "players.json"
+                if players_file.exists():
+                    with open(players_file, 'r', encoding='utf-8') as f:
+                        players_data = json.load(f)
+                        for player in players_data:
+                            player_id = player.get('id')
+                            sweater_num = player.get('sweaterNumber')
+                            if player_id and sweater_num:
+                                self._players_cache[sweater_num] = player_id
+            
+            # Look up by sweater number
+            if sweater_number in self._players_cache:
+                return self._players_cache[sweater_number]
+            
+            # If not found by sweater number, try to match by name
+            if player_name:
+                # This would require additional name matching logic
+                # For now, return None if sweater number lookup fails
+                pass
+            
+            return None
+            
+        except Exception as e:
+            self.logger.debug(f"Error looking up player ID for sweater {sweater_number}: {e}")
+            return None
+
     def _resolve_player_name(self, team_id: int, sweater_number: int, fallback_name: str = "") -> str:
         """
         Resolve player name using sweater number lookup from reference data.
@@ -474,97 +640,7 @@ class HTMLReportParser:
         
         return header
     
-    def _parse_scoring_summary(self, soup: BeautifulSoup) -> Dict[str, Any]:
-        """Parse scoring summary section with goals and assists."""
-        scoring = {
-            'goals': [],
-            'period_totals': {}
-        }
-        
-        try:
-            # Find the scoring summary table
-            scoring_section = soup.find('td', string='SCORING SUMMARY')
-            if scoring_section:
-                # Find the table containing goals
-                table = scoring_section.find_parent().find_next('table')
-                if table:
-                    rows = table.find_all('tr')
-                    for row in rows[1:]:  # Skip header row
-                        cells = row.find_all('td')
-                        if len(cells) >= 9:  # Ensure we have enough columns
-                            goal = {
-                                'goal_number': cells[0].get_text(strip=True),
-                                'period': cells[1].get_text(strip=True),
-                                'time': cells[2].get_text(strip=True),
-                                'strength': cells[3].get_text(strip=True),
-                                'team': cells[4].get_text(strip=True),
-                                'scorer': cells[5].get_text(strip=True),
-                                'assist1': cells[6].get_text(strip=True),
-                                'assist2': cells[7].get_text(strip=True),
-                                'visitor_on_ice': cells[8].get_text(strip=True) if len(cells) > 8 else '',
-                                'home_on_ice': cells[9].get_text(strip=True) if len(cells) > 9 else ''
-                            }
-                            scoring['goals'].append(goal)
-                            
-                            # Track period totals
-                            period = goal['period']
-                            if period not in scoring['period_totals']:
-                                scoring['period_totals'][period] = {'visitor': 0, 'home': 0}
-                            
-                            if goal['team'] == 'NJD':  # Assuming visitor team
-                                scoring['period_totals'][period]['visitor'] += 1
-                            else:
-                                scoring['period_totals'][period]['home'] += 1
-                                
-        except Exception as e:
-            self.logger.error(f"Error parsing scoring summary: {e}")
-            scoring['error'] = str(e)
-        
-        return scoring
     
-    def _parse_penalties_section(self, soup: BeautifulSoup) -> Dict[str, Any]:
-        """Parse penalties section with detailed penalty information."""
-        penalties = {
-            'penalties': [],
-            'period_totals': {}
-        }
-        
-        try:
-            # Find penalties section
-            penalties_section = soup.find('td', string='PENALTIES')
-            if penalties_section:
-                # Find the penalties table
-                table = penalties_section.find_parent().find_next('table')
-                if table:
-                    rows = table.find_all('tr')
-                    for row in rows[1:]:  # Skip header row
-                        cells = row.find_all('td')
-                        if len(cells) >= 6:  # Ensure we have enough columns
-                            penalty = {
-                                'period': cells[0].get_text(strip=True),
-                                'time': cells[1].get_text(strip=True),
-                                'team': cells[2].get_text(strip=True),
-                                'player': cells[3].get_text(strip=True),
-                                'penalty_type': cells[4].get_text(strip=True),
-                                'duration': cells[5].get_text(strip=True)
-                            }
-                            penalties['penalties'].append(penalty)
-                            
-                            # Track period totals
-                            period = penalty['period']
-                            if period not in penalties['period_totals']:
-                                penalties['period_totals'][period] = {'visitor': 0, 'home': 0}
-                            
-                            if penalty['team'] == 'NJD':  # Assuming visitor team
-                                penalties['period_totals'][period]['visitor'] += 1
-                            else:
-                                penalties['period_totals'][period]['home'] += 1
-                                
-        except Exception as e:
-            self.logger.error(f"Error parsing penalties section: {e}")
-            penalties['error'] = str(e)
-        
-        return penalties
     
     def _parse_team_stats(self, soup: BeautifulSoup) -> Dict[str, Any]:
         """Parse team statistics section."""
@@ -3367,11 +3443,17 @@ class HTMLReportParser:
                 # Parse name into first initial and last name
                 name_parts = self._parse_name_parts(name)
                 
+                # Look up playerId using sweater number
+                player_id = None
+                if sweater_number and hasattr(self, 'reference_data') and self.reference_data:
+                    player_id = self._lookup_player_id_by_sweater(sweater_number, name)
+                
                 return {
                     'name': name,
                     'first_initial': name_parts['first_initial'],
                     'last_name': name_parts['last_name'],
                     'sweater_number': sweater_number,
+                    'player_id': player_id,
                     'season_goals': season_goals
                 }
             
@@ -3381,7 +3463,8 @@ class HTMLReportParser:
                 'name': player_text.strip(), 
                 'first_initial': name_parts['first_initial'],
                 'last_name': name_parts['last_name'],
-                'sweater_number': None, 
+                'sweater_number': None,
+                'player_id': None,
                 'season_goals': None
             }
             
@@ -3392,7 +3475,8 @@ class HTMLReportParser:
                 'name': player_text.strip(), 
                 'first_initial': name_parts['first_initial'],
                 'last_name': name_parts['last_name'],
-                'sweater_number': None, 
+                'sweater_number': None,
+                'player_id': None,
                 'season_goals': None
             }
     
@@ -3508,8 +3592,11 @@ class HTMLReportParser:
         }
         
         try:
-            # Look for penalty summary tables specifically
+            # Look for penalty summary tables specifically (exclude VPenaltySummary which is just a header)
             penalty_tables = soup.find_all('table', id='PenaltySummary')
+            
+            # Track processed penalties to avoid duplicates
+            processed_penalties = set()
             
             for table in penalty_tables:
                 # Find all nested tables within the penalty summary
@@ -3532,13 +3619,24 @@ class HTMLReportParser:
                                 if len(cells) >= 6:
                                     penalty_data = self._extract_penalty_from_row(cells)
                                     if penalty_data:
-                                        penalties['all_penalties'].append(penalty_data)
+                                        # Create a unique key for this penalty to avoid duplicates
+                                        penalty_key = (
+                                            penalty_data.get('penalty_number'),
+                                            penalty_data.get('period'),
+                                            penalty_data.get('time'),
+                                            penalty_data.get('player', {}).get('name'),
+                                            penalty_data.get('penalty_type')
+                                        )
                                         
-                                        # Group by period
-                                        period = penalty_data.get('period', 'unknown')
-                                        if period not in penalties['by_period']:
-                                            penalties['by_period'][period] = []
-                                        penalties['by_period'][period].append(penalty_data)
+                                        if penalty_key not in processed_penalties:
+                                            processed_penalties.add(penalty_key)
+                                            penalties['all_penalties'].append(penalty_data)
+                                            
+                                            # Group by period
+                                            period = penalty_data.get('period', 'unknown')
+                                            if period not in penalties['by_period']:
+                                                penalties['by_period'][period] = []
+                                            penalties['by_period'][period].append(penalty_data)
         
         except Exception as e:
             self.logger.error(f"Error parsing penalties section: {e}")
@@ -3595,6 +3693,11 @@ class HTMLReportParser:
             # Parse player name into first initial and last name
             name_parts = self._parse_name_parts(player_name)
             
+            # Look up playerId using sweater number and team context
+            player_id = None
+            if sweater_number and hasattr(self, 'reference_data') and self.reference_data:
+                player_id = self._lookup_player_id_by_sweater(sweater_number, player_name)
+            
             penalty_data = {
                 'penalty_number': penalty_number,
                 'period': period,
@@ -3603,7 +3706,8 @@ class HTMLReportParser:
                     'name': player_name,
                     'first_initial': name_parts['first_initial'],
                     'last_name': name_parts['last_name'],
-                    'sweater_number': sweater_number
+                    'sweater_number': sweater_number,
+                    'player_id': player_id
                 },
                 'pim': pim,
                 'penalty_type': cells[9].get_text(strip=True) if len(cells) > 9 else None

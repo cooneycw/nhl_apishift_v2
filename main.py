@@ -576,15 +576,28 @@ class NHLDataRetrievalSystem:
                             game_id = html_file.stem[2:]  # Remove 'GS' prefix
                             game_ids.add(game_id)
                 
+                # Progress tracking variables
+                total_games = len(game_ids)
+                games_processed_count = 0
+                last_progress_report = 0
+                
+                self.logger.info(f"🎯 Starting curation for {total_games} games")
+                
                 for game_id in game_ids:
                     try:
-                        self.logger.debug(f"Curating reports for game {game_id}")
                         games_processed_this_round = 0
 
-                        # Parse the GS report (Game Summary)
+                        # Parse the GS report (Game Summary) with advanced penalty analysis
                         gs_file = html_dir / 'GS' / f'GS{game_id}.HTM'
                         if gs_file.exists():
                             gs_data = parser.parse_report_data(gs_file, 'GS')
+                            
+                            # Add advanced penalty analysis
+                            penalty_analysis = parser.parse_game_penalties(season, game_id, html_dir)
+                            if penalty_analysis:
+                                gs_data['penalty_analysis'] = penalty_analysis
+                                season_results['penalties_parsed'] += len(penalty_analysis.get('consolidated_penalties', []))
+                                season_results['complex_scenarios'] += len(penalty_analysis.get('complex_scenarios', []))
                             
                             # Save curated GS JSON under json/curate/gs
                             gs_out_dir = Path(self.config.storage_root) / season / 'json' / 'curate' / 'gs'
@@ -674,6 +687,16 @@ class NHLDataRetrievalSystem:
                         if games_processed_this_round > 0:
                             season_results['games_processed'] += 1
                             results['games_processed'] += 1
+                        
+                        # Update progress tracking
+                        games_processed_count += 1
+                        
+                        # Report progress every 50 games or at completion
+                        if games_processed_count - last_progress_report >= 50 or games_processed_count == total_games:
+                            completion_percentage = (games_processed_count / total_games) * 100 if total_games > 0 else 0
+                            self.logger.info(f"📊 Progress: {games_processed_count}/{total_games} games processed "
+                                           f"({completion_percentage:.1f}% complete)")
+                            last_progress_report = games_processed_count
                         
                     except Exception as e:
                         error_msg = f"Error parsing reports for game {game_id}: {e}"
