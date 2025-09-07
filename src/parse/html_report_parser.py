@@ -1854,6 +1854,23 @@ class HTMLReportParser:
             self._current_game_data = data['game_header']
             self._current_game_id = data['game_header'].get('game_info', {}).get('game_id')
             
+            # Get team IDs from boxscore data
+            if self._current_game_id and hasattr(self, 'reference_data'):
+                game_id_int = int(self._current_game_id)
+                boxscore_data = self.reference_data.get_boxscore_by_id(game_id_int)
+                if boxscore_data:
+                    # Set team IDs from boxscore data
+                    away_team = boxscore_data.get('awayTeam', {})
+                    home_team = boxscore_data.get('homeTeam', {})
+                    
+                    if away_team.get('id'):
+                        data['game_header']['visitor_team']['id'] = away_team['id']
+                    if home_team.get('id'):
+                        data['game_header']['home_team']['id'] = home_team['id']
+                    
+                    # Update the stored game data with team IDs
+                    self._current_game_data = data['game_header']
+            
             # Parse visitor team player statistics with enhanced parsing
             data['player_statistics']['visitor'] = self._parse_team_player_stats_enhanced(soup, 'visitor')
             
@@ -1903,7 +1920,8 @@ class HTMLReportParser:
         try:
             # Extract game ID from filename if provided
             if file_path:
-                game_id_match = re.search(r'ES(\d{6})\.HTM', file_path)
+                file_path_str = str(file_path)
+                game_id_match = re.search(r'ES(\d{6})\.HTM', file_path_str)
                 if game_id_match:
                     header_data['game_info']['game_id'] = f"2024{game_id_match.group(1)}"
             
@@ -1911,12 +1929,14 @@ class HTMLReportParser:
             visitor_table = soup.find('table', {'id': 'Visitor'})
             if visitor_table:
                 # Extract team name and score
-                team_name_elem = visitor_table.find('td', string=re.compile(r'GAME \d+ AWAY GAME \d+'))
-                if team_name_elem:
-                    team_text = team_name_elem.get_text(strip=True)
-                    team_name_match = re.search(r'^([^\\n]+)', team_text)
-                    if team_name_match:
-                        header_data['visitor_team']['name'] = team_name_match.group(1).strip()
+                team_name_tds = visitor_table.find_all('td')
+                for td in team_name_tds:
+                    td_text = td.get_text(strip=True)
+                    if re.search(r'GAME \d+ AWAY GAME \d+', td_text):
+                        team_name_match = re.search(r'^([^\n]+)', td_text)
+                        if team_name_match:
+                            header_data['visitor_team']['name'] = team_name_match.group(1).strip()
+                        break
                 
                 # Extract score
                 score_elem = visitor_table.find('td', style=re.compile(r'font-size: 40px'))
@@ -1935,12 +1955,14 @@ class HTMLReportParser:
             home_table = soup.find('table', {'id': 'Home'})
             if home_table:
                 # Extract team name and score
-                team_name_elem = home_table.find('td', string=re.compile(r'GAME \d+ HOME GAME \d+'))
-                if team_name_elem:
-                    team_text = team_name_elem.get_text(strip=True)
-                    team_name_match = re.search(r'^([^\\n]+)', team_text)
-                    if team_name_match:
-                        header_data['home_team']['name'] = team_name_match.group(1).strip()
+                team_name_tds = home_table.find_all('td')
+                for td in team_name_tds:
+                    td_text = td.get_text(strip=True)
+                    if re.search(r'GAME \d+ HOME GAME \d+', td_text):
+                        team_name_match = re.search(r'^([^\n]+)', td_text)
+                        if team_name_match:
+                            header_data['home_team']['name'] = team_name_match.group(1).strip()
+                        break
                 
                 # Extract score
                 score_elem = home_table.find('td', style=re.compile(r'font-size: 40px'))
@@ -2107,7 +2129,8 @@ class HTMLReportParser:
                 resolved_name = self._resolve_player_name(team_id, sweater_number, player_name)
                 
                 # Get player ID from reference data
-                boxscore_data = self.reference_data.get_boxscore_by_id(self._current_game_id) if hasattr(self, '_current_game_id') else None
+                game_id_int = int(self._current_game_id) if hasattr(self, '_current_game_id') and self._current_game_id else None
+                boxscore_data = self.reference_data.get_boxscore_by_id(game_id_int) if game_id_int else None
                 if boxscore_data:
                     team_key = 'awayTeam' if team_type == 'visitor' else 'homeTeam'
                     player_stats = boxscore_data.get('playerByGameStats', {}).get(team_key, {})
@@ -2321,7 +2344,13 @@ class HTMLReportParser:
         
         try:
             # Find faceoff summary section
-            faceoff_section = soup.find('td', string=re.compile(r'FACE-OFF SUMMARY'))
+            faceoff_section = None
+            all_tds = soup.find_all('td')
+            for td in all_tds:
+                if re.search(r'FACE-OFF SUMMARY', td.get_text(strip=True)):
+                    faceoff_section = td
+                    break
+            
             if not faceoff_section:
                 return faceoff_data
             
@@ -2391,7 +2420,13 @@ class HTMLReportParser:
         
         try:
             # Find team summary section
-            team_summary_section = soup.find('td', string=re.compile(r'TEAM SUMMARY'))
+            team_summary_section = None
+            all_tds = soup.find_all('td')
+            for td in all_tds:
+                if re.search(r'TEAM SUMMARY', td.get_text(strip=True)):
+                    team_summary_section = td
+                    break
+            
             if not team_summary_section:
                 return team_summaries
             
