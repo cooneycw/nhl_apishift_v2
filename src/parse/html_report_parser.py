@@ -326,7 +326,8 @@ class HTMLReportParser:
             with open(html_file, 'r', encoding='utf-8', errors='ignore') as f:
                 content = f.read()
             
-            soup = BeautifulSoup(content, 'html.parser')
+            # Use lxml parser for speed and robustness
+            soup = BeautifulSoup(content, 'lxml')
             
             if report_type == 'GS':
                 return self.parse_game_summary_data(soup, str(html_file))
@@ -1854,7 +1855,7 @@ class HTMLReportParser:
             self._current_game_data = data['game_header']
             self._current_game_id = data['game_header'].get('game_info', {}).get('game_id')
             
-            # Get team IDs from boxscore data
+            # Get team IDs and override team abbreviations/names from boxscore data
             if self._current_game_id and hasattr(self, 'reference_data'):
                 game_id_int = int(self._current_game_id)
                 boxscore_data = self.reference_data.get_boxscore_by_id(game_id_int)
@@ -1865,8 +1866,17 @@ class HTMLReportParser:
                     
                     if away_team.get('id'):
                         data['game_header']['visitor_team']['id'] = away_team['id']
+                        # Prefer authoritative abbreviations and names from boxscore
+                        if away_team.get('abbrev'):
+                            data['game_header']['visitor_team']['abbreviation'] = away_team['abbrev']
+                        if away_team.get('commonName', {}).get('default'):
+                            data['game_header']['visitor_team']['name'] = away_team['commonName']['default']
                     if home_team.get('id'):
                         data['game_header']['home_team']['id'] = home_team['id']
+                        if home_team.get('abbrev'):
+                            data['game_header']['home_team']['abbreviation'] = home_team['abbrev']
+                        if home_team.get('commonName', {}).get('default'):
+                            data['game_header']['home_team']['name'] = home_team['commonName']['default']
                     
                     # Update the stored game data with team IDs
                     self._current_game_data = data['game_header']
@@ -1884,8 +1894,45 @@ class HTMLReportParser:
             # Parse faceoff summaries
             data['faceoff_summaries'] = self._parse_faceoff_summaries_enhanced(soup)
             
-            # Parse team summaries (goals, shots, etc.)
-            data['team_summaries'] = self._parse_team_summaries_enhanced(soup)
+            # Compute team summaries (goals, shots, etc.) directly from player stats (authoritative team totals)
+            computed_team_summaries = {'visitor': {}, 'home': {}}
+            for side in ['visitor', 'home']:
+                players = data['player_statistics'].get(side, [])
+                if players:
+                    agg = {
+                        'team_type': 'unknown',
+                        'goals': sum(p.get('goals', 0) for p in players),
+                        'assists': sum(p.get('assists', 0) for p in players),
+                        'points': sum(p.get('points', 0) for p in players),
+                        'plus_minus': sum(p.get('plus_minus', 0) for p in players),
+                        'penalty_minutes': sum(p.get('penalty_minutes', 0) for p in players),
+                        'shots': sum(p.get('shots', 0) for p in players),
+                        'hits': sum(p.get('hits', 0) for p in players),
+                        'blocked_shots': sum(p.get('blocked_shots', 0) for p in players),
+                        'faceoffs_won': sum(p.get('faceoffs_won', 0) for p in players),
+                        'faceoffs_lost': sum(p.get('faceoffs_lost', 0) for p in players),
+                    }
+                    total_fo = agg['faceoffs_won'] + agg['faceoffs_lost']
+                    agg['faceoff_percentage'] = round((agg['faceoffs_won'] / total_fo * 100.0), 1) if total_fo else 0.0
+                    computed_team_summaries[side] = agg
+
+            data['team_summaries'] = computed_team_summaries
+
+            # Faceoff totals fallback: compute totals from players if missing/zero
+            try:
+                if data.get('faceoff_summaries'):
+                    for side in ['visitor', 'home']:
+                        fo = data['faceoff_summaries'].get(side) or {}
+                        total = (fo.get('total') or {})
+                        if not total or (total.get('won', 0) == 0 and total.get('total', 0) == 0):
+                            players = data['player_statistics'].get(side, [])
+                            won = sum(p.get('faceoffs_won', 0) for p in players)
+                            lost = sum(p.get('faceoffs_lost', 0) for p in players)
+                            tot = won + lost
+                            pct = round((won / tot * 100.0), 1) if tot else 0.0
+                            data['faceoff_summaries'][side]['total'] = {'won': won, 'total': tot, 'percentage': pct}
+            except Exception as agg_e:
+                self.logger.debug(f"Fallback aggregation error: {agg_e}")
             
             # Validate parsed data
             self._validate_es_data(data)
@@ -2347,7 +2394,7 @@ class HTMLReportParser:
             faceoff_section = None
             all_tds = soup.find_all('td')
             for td in all_tds:
-                if re.search(r'FACE-OFF SUMMARY', td.get_text(strip=True)):
+                if re.search(r'face-?off\s+summary', td.get_text(strip=True), re.IGNORECASE):
                     faceoff_section = td
                     break
             
@@ -2360,7 +2407,7 @@ class HTMLReportParser:
                 return faceoff_data
             
             # Parse faceoff data for both teams
-            faceoff_rows = faceoff_table.find_all('tr', class_=re.compile(r'oddColor|evenColor'))
+            faceoff_rows = faceoff_table.find_all('tr', class_=re.compile(r'oddColor|evenColor', re.IGNORECASE))
             
             for i, row in enumerate(faceoff_rows):
                 cells = row.find_all('td')

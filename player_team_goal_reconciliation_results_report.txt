@@ -1,0 +1,32 @@
+================================================================================
+NHL PLAYER/TEAM GOAL RECONCILIATION - SEASON SUMMARY
+================================================================================
+Generated: 2025-09-06 18:40:37
+Season: 2024-2025
+
+EXECUTIVE SUMMARY
+----------------------------------------
+Total Games: 1312
+Reconciled Games: 1312
+Failed Games: 0
+Total Goals: 8070
+Total Players Analyzed: 16290
+Overall Reconciliation: 99.3%
+
+RECONCILIATION BREAKDOWN
+----------------------------------------
+Perfect Reconciliations: 16173
+Minor Discrepancies: 117
+Major Discrepancies: 0
+
+CRITICAL ISSUES SUMMARY
+----------------------------------------
+major_team_discrepancy: 142 occurrences
+
+RECOMMENDATIONS
+----------------------------------------
+1. Use Play-by-Play JSON as authoritative source for all goal data
+2. HTML reports show high accuracy for goal counting
+3. Minor discrepancies are typically due to formatting differences
+4. Major discrepancies require manual review and correction
+5. Implement automated validation in the curation pipeline

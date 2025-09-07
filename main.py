@@ -32,6 +32,7 @@ import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import List, Dict, Any, Optional
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Import components from new structure
 from config.nhl_config import NHLConfig, create_default_config
@@ -581,112 +582,276 @@ class NHLDataRetrievalSystem:
                 games_processed_count = 0
                 last_progress_report = 0
                 
-                self.logger.info(f"🎯 Starting curation for {total_games} games")
+                self.logger.info(f"🎯 Starting parallel curation for {total_games} games with {self.config.max_workers} workers")
                 
+                # Use thread-based parallelism for CPU-bound HTML parsing (avoiding process serialization issues)
+                with ThreadPoolExecutor(max_workers=self.config.max_workers) as executor:
+                    # Submit tasks for each game
+                    future_to_game = {}
+                    for game_id in game_ids:
+                        # Use the instance method to avoid serialization issues
+                        future = executor.submit(self._process_single_game_html, game_id, season, html_dir, parser)
+                        future_to_game[future] = game_id
+                    
+                    # Process completed tasks
+                    for future in as_completed(future_to_game):
+                        game_id = future_to_game[future]
+                        try:
+                            game_result = future.result()
+                            
+                            # Update season results
+                            if game_result['reports_processed'] > 0:
+                                season_results['games_processed'] += 1
+                                results['games_processed'] += 1
+                            
+                            season_results['penalties_parsed'] += game_result['penalties_parsed']
+                            season_results['complex_scenarios'] += game_result['complex_scenarios']
+                            
+                            # Add any errors
+                            for error in game_result['errors']:
+                                season_results['parsing_errors'].append(error)
+                                results['parsing_errors'].append(error)
+                                self.logger.error(error)
+                            
+                            # Update progress tracking
+                            games_processed_count += 1
+                            
+                            # Report progress every 50 games or at completion
+                            if games_processed_count - last_progress_report >= 50 or games_processed_count == total_games:
+                                completion_percentage = (games_processed_count / total_games) * 100 if total_games > 0 else 0
+                                self.logger.info(f"📊 Progress: {games_processed_count}/{total_games} games processed "
+                                               f"({completion_percentage:.1f}% complete)")
+                                last_progress_report = games_processed_count
+                                
+                        except Exception as e:
+                            error_msg = f"Error processing game {game_id}: {e}"
+                            season_results['parsing_errors'].append(error_msg)
+                            results['parsing_errors'].append(error_msg)
+                            self.logger.error(error_msg)
+                
+                results['seasons_processed'].append(season_results)
+                self.logger.info(f"Season {season}: {season_results['games_processed']} games curated (GS, ES, RO, and FS reports)")
+        
+            self.logger.info(f"Step 3: HTML report curation completed. Total games curated: {results['games_processed']}")
+            
+        except Exception as e:
+            self.logger.error(f"Error in step_03_curate: {e}")
+            raise
+            
+        return results
+    
+    def _process_single_game_html(self, game_id: str, season: str, html_dir: Path, parser) -> Dict[str, Any]:
+        """
+        Process HTML reports for a single game.
+        
+        Args:
+            game_id: Game identifier (6-digit format)
+            season: Season identifier
+            html_dir: Path to HTML reports directory
+            parser: HTMLReportParser instance
+            
+        Returns:
+            Dictionary with processing results for this game
+        """
+        game_result = {
+            'game_id': game_id,
+            'reports_processed': 0,
+            'penalties_parsed': 0,
+            'complex_scenarios': 0,
+            'errors': []
+        }
+        
+        try:
+            # IMPORTANT: Create a fresh parser per task to avoid cross-thread shared state
+            from src.parse.html_report_parser import HTMLReportParser
+            local_parser = HTMLReportParser(self.config)
+            # Parse the GS report (Game Summary) with advanced penalty analysis
+            gs_file = html_dir / 'GS' / f'GS{game_id}.HTM'
+            if gs_file.exists():
+                gs_data = local_parser.parse_report_data(gs_file, 'GS')
+                
+                # Add advanced penalty analysis
+                penalty_analysis = local_parser.parse_game_penalties(season, game_id, html_dir)
+                if penalty_analysis:
+                    gs_data['penalty_analysis'] = penalty_analysis
+                    game_result['penalties_parsed'] += len(penalty_analysis.get('consolidated_penalties', []))
+                    game_result['complex_scenarios'] += len(penalty_analysis.get('complex_scenarios', []))
+                
+                # Save curated GS JSON under json/curate/gs
+                gs_out_dir = Path(self.config.storage_root) / season / 'json' / 'curate' / 'gs'
+                gs_out_dir.mkdir(parents=True, exist_ok=True)
+                gs_out_file = gs_out_dir / f'gs_{game_id}.json'
+                with open(gs_out_file, 'w') as f:
+                    json.dump(gs_data, f, indent=2)
+                game_result['reports_processed'] += 1
+
+            # Parse the ES report (Event Summary)
+            es_file = html_dir / 'ES' / f'ES{game_id}.HTM'
+            if es_file.exists():
+                es_data = local_parser.parse_report_data(es_file, 'ES')
+                
+                # Save curated ES JSON under json/curate/es
+                es_out_dir = Path(self.config.storage_root) / season / 'json' / 'curate' / 'es'
+                es_out_dir.mkdir(parents=True, exist_ok=True)
+                es_out_file = es_out_dir / f'es_{game_id}.json'
+                with open(es_out_file, 'w') as f:
+                    json.dump(es_data, f, indent=2)
+                game_result['reports_processed'] += 1
+
+            # Parse the RO report (Roster)
+            ro_file = html_dir / 'RO' / f'RO{game_id}.HTM'
+            if ro_file.exists():
+                ro_data = local_parser.parse_report_data(ro_file, 'RO')
+                
+                # Save curated RO JSON under json/curate/ro
+                ro_out_dir = Path(self.config.storage_root) / season / 'json' / 'curate' / 'ro'
+                ro_out_dir.mkdir(parents=True, exist_ok=True)
+                ro_out_file = ro_out_dir / f'ro_{game_id}.json'
+                with open(ro_out_file, 'w') as f:
+                    json.dump(ro_data, f, indent=2)
+                game_result['reports_processed'] += 1
+
+            # Parse the FS report (Faceoff Summary)
+            fs_file = html_dir / 'FS' / f'FS{game_id}.HTM'
+            if fs_file.exists():
+                fs_data = local_parser.parse_report_data(fs_file, 'FS')
+                
+                # Save curated FS JSON under json/curate/fs
+                fs_out_dir = Path(self.config.storage_root) / season / 'json' / 'curate' / 'fs'
+                fs_out_dir.mkdir(parents=True, exist_ok=True)
+                fs_out_file = fs_out_dir / f'fs_{game_id}.json'
+                with open(fs_out_file, 'w') as f:
+                    json.dump(fs_data, f, indent=2)
+                game_result['reports_processed'] += 1
+
+            # Parse the TH report (Time on Ice - Home)
+            th_file = html_dir / 'TH' / f'TH{game_id}.HTM'
+            if th_file.exists():
+                th_data = local_parser.parse_report_data(th_file, 'TH')
+                
+                # Save curated TH JSON under json/curate/th
+                th_out_dir = Path(self.config.storage_root) / season / 'json' / 'curate' / 'th'
+                th_out_dir.mkdir(parents=True, exist_ok=True)
+                th_out_file = th_out_dir / f'th_{game_id}.json'
+                with open(th_out_file, 'w') as f:
+                    json.dump(th_data, f, indent=2)
+                game_result['reports_processed'] += 1
+
+            # Parse the TV report (Time on Ice - Away)
+            tv_file = html_dir / 'TV' / f'TV{game_id}.HTM'
+            if tv_file.exists():
+                tv_data = local_parser.parse_report_data(tv_file, 'TV')
+                
+                # Save curated TV JSON under json/curate/tv
+                tv_out_dir = Path(self.config.storage_root) / season / 'json' / 'curate' / 'tv'
+                tv_out_dir.mkdir(parents=True, exist_ok=True)
+                tv_out_file = tv_out_dir / f'tv_{game_id}.json'
+                with open(tv_out_file, 'w') as f:
+                    json.dump(tv_data, f, indent=2)
+                game_result['reports_processed'] += 1
+                
+        except Exception as e:
+            error_msg = f"Error parsing reports for game {game_id}: {e}"
+            game_result['errors'].append(error_msg)
+            
+        return game_result
+
+
+    def step_03_curate(self, seasons: List[str], full_update: bool = False) -> Dict[str, Any]:
+        """
+        Step 3: Curate data by parsing HTML reports and extracting comprehensive game data.
+        
+        Note: Shift chart data (SC) is curated during the JSON collection process (step_01_collect_json)
+        and saved to storage/{season}/json/curate/sc/ following the established pattern.
+        
+        Args:
+            seasons: List of season identifiers
+            full_update: Whether this is a full update (reprocesses all data)
+            
+        Returns:
+            Dictionary containing curation results
+        """
+        self.logger.info("Step 3: Curating data by parsing HTML reports...")
+        
+        results = {
+            'seasons_processed': [],
+            'games_processed': 0,
+            'total_penalties_parsed': 0,
+            'complex_scenarios_found': 0,
+            'parsing_errors': []
+        }
+        
+        try:
+            # Import the HTML penalty parser
+            from src.parse.html_report_parser import HTMLReportParser
+            
+            parser = HTMLReportParser(self.config)
+            
+            for season in seasons:
+                self.logger.info(f"Processing HTML penalties for season {season}")
+                season_results = {
+                    'season': season,
+                    'games_processed': 0,
+                    'penalties_parsed': 0,
+                    'complex_scenarios': 0,
+                    'parsing_errors': []
+                }
+                
+                # Get HTML directory for this season
+                html_dir = Path(self.config.storage_root) / season / "html" / "reports"
+                if not html_dir.exists():
+                    self.logger.warning(f"HTML directory not found for season {season}")
+                    continue
+                
+                # Determine which games to process
+                game_ids = set()
+                # If specific games were provided via CLI, honor them (strip season prefix if present)
+                cli_games = getattr(self, 'cli_games', None)
+                if cli_games:
+                    for gid in cli_games:
+                        gid_str = str(gid)
+                        # Accept both 10-digit (e.g., 2024021036) and 6-digit forms (e.g., 021036)
+                        if len(gid_str) == 10:
+                            # Extract the 6-digit game number from the end
+                            game_ids.add(gid_str[-6:])
+                        elif len(gid_str) == 6:
+                            game_ids.add(gid_str)
+                else:
+                    # Otherwise, get list of available games from HTML files
+                    # Look in the GS subdirectory for Game Summary files
+                    gs_dir = html_dir / "GS"
+                    if gs_dir.exists():
+                        html_files = list(gs_dir.glob("GS*.HTM"))
+                        for html_file in html_files:
+                            # Extract game ID from filename (GS020489.HTM -> 020489)
+                            game_id = html_file.stem[2:]  # Remove 'GS' prefix
+                            game_ids.add(game_id)
+                
+                # Progress tracking variables
+                total_games = len(game_ids)
+                games_processed_count = 0
+                last_progress_report = 0
+                
+                self.logger.info(f"🎯 Starting sequential curation for {total_games} games")
+                
+                # Process games sequentially (much faster than multiprocessing for this workload)
                 for game_id in game_ids:
                     try:
-                        games_processed_this_round = 0
-
-                        # Parse the GS report (Game Summary) with advanced penalty analysis
-                        gs_file = html_dir / 'GS' / f'GS{game_id}.HTM'
-                        if gs_file.exists():
-                            gs_data = parser.parse_report_data(gs_file, 'GS')
-                            
-                            # Add advanced penalty analysis
-                            penalty_analysis = parser.parse_game_penalties(season, game_id, html_dir)
-                            if penalty_analysis:
-                                gs_data['penalty_analysis'] = penalty_analysis
-                                season_results['penalties_parsed'] += len(penalty_analysis.get('consolidated_penalties', []))
-                                season_results['complex_scenarios'] += len(penalty_analysis.get('complex_scenarios', []))
-                            
-                            # Save curated GS JSON under json/curate/gs
-                            gs_out_dir = Path(self.config.storage_root) / season / 'json' / 'curate' / 'gs'
-                            gs_out_dir.mkdir(parents=True, exist_ok=True)
-                            gs_out_file = gs_out_dir / f'gs_{game_id}.json'
-                            with open(gs_out_file, 'w') as f:
-                                json.dump(gs_data, f, indent=2)
-                            games_processed_this_round += 1
-                        else:
-                            self.logger.warning(f"GS report not found for game {game_id}")
-
-                        # Parse the ES report (Event Summary)
-                        es_file = html_dir / 'ES' / f'ES{game_id}.HTM'
-                        if es_file.exists():
-                            es_data = parser.parse_report_data(es_file, 'ES')
-                            
-                            # Save curated ES JSON under json/curate/es
-                            es_out_dir = Path(self.config.storage_root) / season / 'json' / 'curate' / 'es'
-                            es_out_dir.mkdir(parents=True, exist_ok=True)
-                            es_out_file = es_out_dir / f'es_{game_id}.json'
-                            with open(es_out_file, 'w') as f:
-                                json.dump(es_data, f, indent=2)
-                            games_processed_this_round += 1
-                        else:
-                            self.logger.warning(f"ES report not found for game {game_id}")
-
-                        # Parse the RO report (Roster)
-                        ro_file = html_dir / 'RO' / f'RO{game_id}.HTM'
-                        if ro_file.exists():
-                            ro_data = parser.parse_report_data(ro_file, 'RO')
-                            
-                            # Save curated RO JSON under json/curate/ro
-                            ro_out_dir = Path(self.config.storage_root) / season / 'json' / 'curate' / 'ro'
-                            ro_out_dir.mkdir(parents=True, exist_ok=True)
-                            ro_out_file = ro_out_dir / f'ro_{game_id}.json'
-                            with open(ro_out_file, 'w') as f:
-                                json.dump(ro_data, f, indent=2)
-                            games_processed_this_round += 1
-                        else:
-                            self.logger.warning(f"RO report not found for game {game_id}")
-
-                        # Parse the FS report (Faceoff Summary)
-                        fs_file = html_dir / 'FS' / f'FS{game_id}.HTM'
-                        if fs_file.exists():
-                            fs_data = parser.parse_report_data(fs_file, 'FS')
-                            
-                            # Save curated FS JSON under json/curate/fs
-                            fs_out_dir = Path(self.config.storage_root) / season / 'json' / 'curate' / 'fs'
-                            fs_out_dir.mkdir(parents=True, exist_ok=True)
-                            fs_out_file = fs_out_dir / f'fs_{game_id}.json'
-                            with open(fs_out_file, 'w') as f:
-                                json.dump(fs_data, f, indent=2)
-                            games_processed_this_round += 1
-                        else:
-                            self.logger.warning(f"FS report not found for game {game_id}")
-
-                        # Parse the TH report (Time on Ice - Home)
-                        th_file = html_dir / 'TH' / f'TH{game_id}.HTM'
-                        if th_file.exists():
-                            th_data = parser.parse_report_data(th_file, 'TH')
-                            
-                            # Save curated TH JSON under json/curate/th (folder lower-case), filename mirrors HTM base
-                            th_out_dir = Path(self.config.storage_root) / season / 'json' / 'curate' / 'th'
-                            th_out_dir.mkdir(parents=True, exist_ok=True)
-                            th_out_file = th_out_dir / f'th_{game_id}.json'
-                            with open(th_out_file, 'w') as f:
-                                json.dump(th_data, f, indent=2)
-                            games_processed_this_round += 1
-                        else:
-                            self.logger.warning(f"TH report not found for game {game_id}")
-
-                        # Parse the TV report (Time on Ice - Away)
-                        tv_file = html_dir / 'TV' / f'TV{game_id}.HTM'
-                        if tv_file.exists():
-                            tv_data = parser.parse_report_data(tv_file, 'TV')
-                            
-                            # Save curated TV JSON under json/curate/tv (folder lower-case)
-                            tv_out_dir = Path(self.config.storage_root) / season / 'json' / 'curate' / 'tv'
-                            tv_out_dir.mkdir(parents=True, exist_ok=True)
-                            tv_out_file = tv_out_dir / f'tv_{game_id}.json'
-                            with open(tv_out_file, 'w') as f:
-                                json.dump(tv_data, f, indent=2)
-                            games_processed_this_round += 1
-                        else:
-                            self.logger.warning(f"TV report not found for game {game_id}")
-
-                        if games_processed_this_round > 0:
+                        game_result = self._process_single_game_html(game_id, season, html_dir, parser)
+                        
+                        # Update season results
+                        if game_result['reports_processed'] > 0:
                             season_results['games_processed'] += 1
                             results['games_processed'] += 1
+                        
+                        season_results['penalties_parsed'] += game_result['penalties_parsed']
+                        season_results['complex_scenarios'] += game_result['complex_scenarios']
+                        
+                        # Add any errors
+                        for error in game_result['errors']:
+                            season_results['parsing_errors'].append(error)
+                            results['parsing_errors'].append(error)
+                            self.logger.error(error)
                         
                         # Update progress tracking
                         games_processed_count += 1
@@ -697,9 +862,9 @@ class NHLDataRetrievalSystem:
                             self.logger.info(f"📊 Progress: {games_processed_count}/{total_games} games processed "
                                            f"({completion_percentage:.1f}% complete)")
                             last_progress_report = games_processed_count
-                        
+                            
                     except Exception as e:
-                        error_msg = f"Error parsing reports for game {game_id}: {e}"
+                        error_msg = f"Error processing game {game_id}: {e}"
                         season_results['parsing_errors'].append(error_msg)
                         results['parsing_errors'].append(error_msg)
                         self.logger.error(error_msg)
