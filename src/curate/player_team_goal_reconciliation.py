@@ -20,6 +20,7 @@ Usage:
 import json
 import sys
 import argparse
+import re
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Tuple
 from dataclasses import dataclass
@@ -154,9 +155,13 @@ class PlayerTeamGoalReconciliation:
             'reconciliation_results': []
         }
         
-        for game_file in game_files:
+        for i, game_file in enumerate(game_files, 1):
             game_id = game_file.stem
             try:
+                # Show progress indicator
+                progress_percent = (i / total_games) * 100
+                print(f"\rProcessing game {i}/{total_games} ({progress_percent:.1f}%) - Game {game_id}", end='', flush=True)
+                
                 result = self.reconcile_game(game_id)
                 if result:
                     season_summary['reconciliation_results'].append(result)
@@ -183,6 +188,9 @@ class PlayerTeamGoalReconciliation:
                 logger.error(f"Failed to reconcile game {game_id}: {e}")
                 failed_games += 1
         
+        # Clear the progress line and show completion
+        print(f"\r{' ' * 80}\r", end='', flush=True)
+        
         season_summary['reconciled_games'] = reconciled_games
         season_summary['failed_games'] = failed_games
         
@@ -192,6 +200,8 @@ class PlayerTeamGoalReconciliation:
             perfect_percentage = (season_summary['perfect_reconciliations'] / total_player_checks) * 100
             season_summary['overall_reconciliation_percentage'] = perfect_percentage
         
+        print(f"\n✅ Player/Team reconciliation complete: {reconciled_games}/{total_games} games")
+        print(f"📊 Overall reconciliation: {season_summary.get('overall_reconciliation_percentage', 0):.1f}%")
         logger.info(f"Player/Team reconciliation complete: {reconciled_games}/{total_games} games")
         logger.info(f"Overall reconciliation: {season_summary.get('overall_reconciliation_percentage', 0):.1f}%")
         
@@ -199,7 +209,7 @@ class PlayerTeamGoalReconciliation:
     
     def reconcile_game(self, game_id: str) -> Optional[GameReconciliationResult]:
         """Reconcile player and team goal data for a specific game."""
-        logger.info(f"Reconciling player/team goal data for game {game_id}")
+        # Progress is now shown in the main loop, no need for individual game logging
         
         try:
             # Load authoritative data (Play-by-Play JSON)
