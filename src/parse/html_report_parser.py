@@ -4301,9 +4301,36 @@ class HTMLReportParser:
             away_players = self._parse_players_on_ice(cells[8].get_text(strip=True) if len(cells) > 8 else '')
             home_players = self._parse_players_on_ice(cells[9].get_text(strip=True) if len(cells) > 9 else '')
             
+            # Determine period type based on period number
+            if period is None:
+                # For null periods, check context to determine if it's OT or SO
+                # If time looks like overtime (typically < 20:00) and no period, likely OT
+                time_str = cells[2].get_text(strip=True)
+                if ':' in time_str:
+                    try:
+                        minutes = int(time_str.split(':')[0])
+                        # Overtime is typically < 20 minutes, shootout has specific times
+                        if minutes < 20:
+                            period_type = "OVERTIME"
+                        else:
+                            period_type = "REGULAR"  # Fallback for null periods
+                    except:
+                        period_type = "OVERTIME"  # Best guess for null periods
+                else:
+                    period_type = "OVERTIME"  # Default for null periods
+            elif period <= 3:
+                period_type = "REGULAR"
+            elif period == 4:
+                period_type = "OVERTIME"
+            elif period >= 5:
+                period_type = "SHOOTOUT"
+            else:
+                period_type = "REGULAR"  # Default fallback
+
             goal_data = {
                 'goal_number': goal_number,
                 'period': period,
+                'period_type': period_type,
                 'time': cells[2].get_text(strip=True),
                 'strength': cells[3].get_text(strip=True),
                 'team': cells[4].get_text(strip=True),

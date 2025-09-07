@@ -355,7 +355,7 @@ class PlayerTeamGoalReconciliation:
             8: "MTL", 9: "OTT", 10: "TOR", 12: "CAR", 13: "FLA", 14: "TBL", 15: "WSH",
             16: "CHI", 17: "DET", 18: "NSH", 19: "STL", 20: "CGY", 21: "COL", 22: "EDM",
             23: "VAN", 24: "ANA", 25: "DAL", 26: "LAK", 28: "SJS", 29: "CBJ", 30: "MIN",
-            52: "WPG", 53: "ARI", 54: "VGK", 55: "SEA"
+            52: "WPG", 53: "ARI", 54: "VGK", 55: "SEA", 59: "UTA"
         }
         
         # Reverse mapping for team abbreviations to IDs
@@ -1251,9 +1251,10 @@ class PlayerTeamGoalReconciliation:
             assist1 = goal_data.get('assist1', {})
             assist2 = goal_data.get('assist2', {})
             
-            # Determine if this is a shootout goal based on period
+            # Get period and period_type from curated data
             period = goal_data.get('period', 1)
-            is_shootout = period == 5  # Shootout is typically period 5 in GS reports
+            period_type = goal_data.get('period_type', 'REGULAR')  # Use curated period_type
+            is_shootout = period_type == 'SHOOTOUT'
             
             # Get player IDs from sweater numbers
             scorer_sweater = scorer.get('sweater_number', 0)
@@ -1268,7 +1269,7 @@ class PlayerTeamGoalReconciliation:
             goal = {
                 'goal_number': goal_data.get('goal_number', 0),
                 'period': period,
-                'period_type': 'SHOOTOUT' if is_shootout else 'REGULAR',
+                'period_type': period_type,  # Use the curated period_type directly
                 'time': goal_data.get('time', '00:00'),
                 'team': goal_data.get('team', ''),
                 'team_id': self.team_abbrev_to_id.get(goal_data.get('team', ''), 0),
