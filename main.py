@@ -1124,7 +1124,8 @@ class NHLDataRetrievalSystem:
             # Run reconciliation with enhanced reporting
             reconciliation_results = reconciliation_system.reconcile_all_games_enhanced(
                 verbose=False, 
-                output_file=f"reconciliation_{season}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                output_file=f"reconciliation_{season}_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+                games_filter=getattr(self, 'cli_games', None)
             )
             
             self.logger.info(f"Reconciliation completed for season {season}: {reconciliation_results.get('overall_reconciliation', 0):.1f}%")

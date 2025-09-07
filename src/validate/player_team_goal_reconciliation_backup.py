@@ -218,15 +218,6 @@ class PlayerReconciliationResult:
     overtime_assist_discrepancy: int = 0
     shootout_goal_discrepancy: int = 0
     
-    # ES combined REG+OT comparison (player-level)
-    auth_combined_goals: int = 0
-    auth_combined_assists: int = 0
-    es_combined_goals: int = 0
-    es_combined_assists: int = 0
-    es_combined_goal_discrepancy: int = 0
-    es_combined_assist_discrepancy: int = 0
-    es_combined_status: str = "perfect"
-    
     # Overall reconciliation status
     reconciliation_status: str = "perfect"
     
@@ -279,12 +270,6 @@ class TeamReconciliationResult:
     overtime_discrepancy: int = 0
     shootout_goals_discrepancy: int = 0
     shootout_outcome_discrepancy: int = 0
-    
-    # ES combined REG+OT comparison (team-level)
-    auth_combined_goals: int = 0
-    es_combined_goals: int = 0
-    es_combined_discrepancy: int = 0
-    es_combined_status: str = 'perfect'
     
     # Overall reconciliation status
     reconciliation_status: str = 'perfect'
@@ -476,7 +461,7 @@ class PlayerTeamGoalReconciliation:
         
         return season_summary
     
-    def reconcile_all_games_enhanced(self, verbose: bool = False, output_file: str = None, games_filter: List[str] = None) -> Dict[str, Any]:
+    def reconcile_all_games_enhanced(self, verbose: bool = False, output_file: str = None) -> Dict[str, Any]:
         """
         Enhanced reconciliation with individual game files and comprehensive reporting.
         
@@ -494,17 +479,6 @@ class PlayerTeamGoalReconciliation:
         # Get all game IDs from boxscores directory
         boxscore_dir = self.storage_path / 'json' / 'boxscores'
         game_files = list(boxscore_dir.glob('*.json'))
-        
-        # Apply games filter if provided
-        if games_filter:
-            filtered_game_files = []
-            for game_file in game_files:
-                game_id = game_file.stem  # Get filename without extension
-                if game_id in games_filter:
-                    filtered_game_files.append(game_file)
-            game_files = filtered_game_files
-            if verbose:
-                logger.info(f"Games filter applied: {len(game_files)} games selected from {len(list(boxscore_dir.glob('*.json')))} total")
         
         total_games = len(game_files)
         reconciled_games = 0
@@ -657,43 +631,38 @@ class PlayerTeamGoalReconciliation:
                     f.write(f"  REGULATION TIME:\n")
                     f.write(f"    Authoritative: {team_result.auth_regulation_goals} goals\n")
                     f.write(f"    GS HTML:       {team_result.gs_regulation_goals} goals (Δ{team_result.regulation_discrepancy:+d})\n")
-                    f.write(f"    ES HTML:       --\n")
+                    f.write(f"    ES HTML:       {team_result.es_regulation_goals} goals\n")
                     f.write(f"    PL HTML:       {team_result.pl_regulation_goals} goals\n")
                     
                     # Overtime
                     f.write(f"  OVERTIME:\n")
                     f.write(f"    Authoritative: {team_result.auth_overtime_goals} goals\n")
                     f.write(f"    GS HTML:       {team_result.gs_overtime_goals} goals (Δ{team_result.overtime_discrepancy:+d})\n")
-                    f.write(f"    ES HTML:       --\n")
+                    f.write(f"    ES HTML:       {team_result.es_overtime_goals} goals\n")
                     f.write(f"    PL HTML:       {team_result.pl_overtime_goals} goals\n")
                     
                     # Shootout Goals (individual goals during shootout)
                     f.write(f"  SHOOTOUT GOALS (individual):\n")
                     f.write(f"    Authoritative: {team_result.auth_shootout_goals} goals\n")
-                    f.write(f"    GS HTML:       --\n")
-                    f.write(f"    ES HTML:       --\n")
+                    f.write(f"    GS HTML:       {team_result.gs_shootout_goals} goals (Δ{team_result.shootout_goals_discrepancy:+d})\n")
+                    f.write(f"    ES HTML:       {team_result.es_shootout_goals} goals\n")
                     f.write(f"    PL HTML:       {team_result.pl_shootout_goals} goals\n")
                     
                     # Shootout Outcome (0 or 1 - who won)
                     f.write(f"  SHOOTOUT OUTCOME (0/1):\n")
                     f.write(f"    Authoritative: {team_result.auth_shootout_outcome}\n")
                     f.write(f"    GS HTML:       {team_result.gs_shootout_outcome} (Δ{team_result.shootout_outcome_discrepancy:+d})\n")
-                    f.write(f"    ES HTML:       --\n")
+                    f.write(f"    ES HTML:       {team_result.es_shootout_outcome}\n")
                     f.write(f"    PL HTML:       {team_result.pl_shootout_outcome}\n")
                     
-                    # ES combined REG+OT line
-                    f.write(f"  ES TOTAL REG+OT:\n")
-                    f.write(f"    Authoritative: {team_result.auth_combined_goals} goals\n")
-                    f.write(f"    ES HTML:       {team_result.es_combined_goals} goals (Δ{team_result.es_combined_discrepancy:+d})\n")
-                    f.write(f"  OVERALL STATUS: {team_result.reconciliation_status} | ES Combined: {team_result.es_combined_status}\n\n")
+                    f.write(f"  OVERALL STATUS: {team_result.reconciliation_status}\n\n")
                 
                 # Player-level reconciliation by phase
                 f.write("PLAYER-LEVEL RECONCILIATION BY PHASE\n")
                 f.write("-" * 50 + "\n")
                 f.write("Sources: Authoritative (Boxscore) | GS HTML | ES HTML | PL HTML\n")
                 f.write("Note: PL HTML does not include assist data - only goals are compared\n")
-                f.write("Note: Shootout goals are individual goals during shootout (no assists in shootout)\n")
-                f.write("Note: * ES totals placed under regulation may include OT (no phase breakdown)\n\n")
+                f.write("Note: Shootout goals are individual goals during shootout (no assists in shootout)\n\n")
                 
                 # Group players by team
                 players_by_team = {}
@@ -712,12 +681,9 @@ class PlayerTeamGoalReconciliation:
                         
                         # Regulation Time
                         f.write(f"      REGULATION TIME:\n")
-                        # Compute ES asterisk flags when ES totals likely include OT distribution
-                        es_goals_star = "*" if (player.auth_overtime_goals > 0 and player.es_regulation_goals == (player.auth_regulation_goals + player.auth_overtime_goals)) else ""
-                        es_assists_star = "*" if (player.auth_overtime_assists > 0 and player.es_regulation_assists == (player.auth_regulation_assists + player.auth_overtime_assists)) else ""
                         f.write(f"        Authoritative: {player.auth_regulation_goals}G {player.auth_regulation_assists}A\n")
                         f.write(f"        GS HTML:       {player.gs_regulation_goals}G {player.gs_regulation_assists}A\n")
-                        f.write(f"        ES HTML:       -- --\n")
+                        f.write(f"        ES HTML:       {player.es_regulation_goals}G {player.es_regulation_assists}A\n")
                         f.write(f"        PL HTML:       {player.pl_regulation_goals}G --A (no assist data)\n")
                         f.write(f"        Discrepancy:   {player.regulation_goal_discrepancy:+d}G {player.regulation_assist_discrepancy:+d}A\n")
                         
@@ -725,23 +691,19 @@ class PlayerTeamGoalReconciliation:
                         f.write(f"      OVERTIME:\n")
                         f.write(f"        Authoritative: {player.auth_overtime_goals}G {player.auth_overtime_assists}A\n")
                         f.write(f"        GS HTML:       {player.gs_overtime_goals}G {player.gs_overtime_assists}A\n")
-                        f.write(f"        ES HTML:       -- --\n")
+                        f.write(f"        ES HTML:       {player.es_overtime_goals}G {player.es_overtime_assists}A\n")
                         f.write(f"        PL HTML:       {player.pl_overtime_goals}G --A (no assist data)\n")
                         f.write(f"        Discrepancy:   {player.overtime_goal_discrepancy:+d}G {player.overtime_assist_discrepancy:+d}A\n")
                         
                         # Shootout Goals (no assists)
                         f.write(f"      SHOOTOUT GOALS:\n")
                         f.write(f"        Authoritative: {player.auth_shootout_goals}G\n")
-                        f.write(f"        GS HTML:       --\n")
-                        f.write(f"        ES HTML:       --\n")
+                        f.write(f"        GS HTML:       {player.gs_shootout_goals}G\n")
+                        f.write(f"        ES HTML:       {player.es_shootout_goals}G\n")
                         f.write(f"        PL HTML:       {player.pl_shootout_goals}G\n")
                         f.write(f"        Discrepancy:   {player.shootout_goal_discrepancy:+d}G\n")
                         
-                        # ES combined totals row
-                        f.write(f"      ES TOTAL REG+OT:\n")
-                        f.write(f"        Authoritative: {player.auth_combined_goals}G {player.auth_combined_assists}A\n")
-                        f.write(f"        ES HTML:       {player.es_combined_goals}G {player.es_combined_assists}A (Δ{player.es_combined_goal_discrepancy:+d}G Δ{player.es_combined_assist_discrepancy:+d}A)\n")
-                        f.write(f"      OVERALL STATUS: {player.reconciliation_status} | ES Combined: {player.es_combined_status}\n\n")
+                        f.write(f"      OVERALL STATUS: {player.reconciliation_status}\n\n")
                 
                 # Critical discrepancies
                 if game_result.critical_discrepancies:
@@ -1116,15 +1078,7 @@ class PlayerTeamGoalReconciliation:
                 details = event.get('details', {})
                 period_descriptor = event.get('periodDescriptor', {})
                 period = period_descriptor.get('number', 1)
-                period_type_raw = period_descriptor.get('periodType', 'REG')
-                
-                # Map NHL period types to our standard format
-                period_type_mapping = {
-                    'REG': 'REGULAR',
-                    'OT': 'OVERTIME', 
-                    'SO': 'SHOOTOUT'
-                }
-                period_type = period_type_mapping.get(period_type_raw, 'REGULAR')
+                period_type = period_descriptor.get('periodType', 'REGULAR')
                 
                 # Extract goal information
                 scorer_id = details.get('scoringPlayerId')
@@ -1146,7 +1100,7 @@ class PlayerTeamGoalReconciliation:
                 team = self.team_id_mappings.get(team_id, f'Team_{team_id}')
                 
                 # Determine if this is a shootout goal
-                is_shootout = period_type == 'SHOOTOUT' or period_type_raw == 'SO'
+                is_shootout = period_type == 'SHOOTOUT'
                 
                 goal = {
                     'goal_number': len(goals) + 1,
@@ -1382,72 +1336,66 @@ class PlayerTeamGoalReconciliation:
         from bs4 import BeautifulSoup
         import re
         
-        with open(pl_file, 'r', encoding='utf-8', errors='ignore') as f:
+        with open(pl_file, 'r', encoding='utf-8') as f:
             content = f.read()
         
-        # Use lxml for robustness; fall back to html.parser if unavailable
-        try:
-            soup = BeautifulSoup(content, 'lxml')
-        except Exception:
-            soup = BeautifulSoup(content, 'html.parser')
+        soup = BeautifulSoup(content, 'html.parser')
+        goals = []
         
-        goals: List[Dict[str, Any]] = []
+        # Load player mappings to get player IDs from sweater numbers
         player_mappings = self._load_player_mappings(game_id)
         
-        # Iterate all rows in the document and detect goal events by the event-type cell text
-        # Typical PL columns: [Evt#, Per, Str, Time, Event, Description]
-        for row in soup.find_all('tr'):
-            cells = row.find_all('td')
-            if len(cells) < 6:
-                continue
-            event_number = cells[0].get_text(strip=True)
-            period_text = cells[1].get_text(strip=True)
-            time_text = cells[3].get_text(strip=True)
-            event_type_text = cells[4].get_text(strip=True).upper()
-            # Description sometimes contains newlines like 'Assist:' on next line
-            description = cells[5].get_text('\n', strip=True)
-            
-            # Detect goal rows (covers variants like 'GOAL', 'SHOT - GOAL')
-            if 'GOAL' not in event_type_text:
-                continue
-            
-            # Determine numeric period and mapped period_type
-            period = int(period_text) if period_text.isdigit() else 1
-            if period >= 5:
-                period_type = 'SHOOTOUT'
-            elif period == 4:
-                period_type = 'OVERTIME'
-            else:
-                period_type = 'REGULAR'
-            is_shootout = (period_type == 'SHOOTOUT')
-            
-            # Parse description to extract team/sweater/name (+ optional assists if present)
-            goal_info = self._parse_pl_goal_description(description, player_mappings)
-            if not goal_info:
-                continue
-            
-            goal_record = {
-                'goal_number': int(event_number) if event_number.isdigit() else 0,
-                'period': period,
-                'period_type': period_type,
-                'time': time_text,
-                'team': goal_info['team'],
-                'team_id': self.team_abbrev_to_id.get(goal_info['team'], 0),
-                'scorer_id': goal_info['scorer_id'],
-                'scorer_name': goal_info['scorer_name'],
-                'scorer_sweater': goal_info['scorer_sweater'],
-                # PL assists are unreliable; retain if parsed but they won't be used for reconciliation
-                'assist1_id': goal_info.get('assist1_id'),
-                'assist1_name': goal_info.get('assist1_name'),
-                'assist1_sweater': goal_info.get('assist1_sweater'),
-                'assist2_id': goal_info.get('assist2_id'),
-                'assist2_name': goal_info.get('assist2_name'),
-                'assist2_sweater': goal_info.get('assist2_sweater'),
-                'is_shootout': is_shootout,
-                'counts_for_stats': not is_shootout,  # Shootout goals don't count toward stats
-                'source': 'html_pl'
-            }
-            goals.append(goal_record)
+        # Find all goal events (td elements with class containing "goal")
+        goal_cells = soup.find_all('td', class_=re.compile(r'.*goal.*'))
+        
+        # Group goal cells by their parent row
+        goal_rows = {}
+        for cell in goal_cells:
+            row = cell.find_parent('tr')
+            if row and row not in goal_rows:
+                goal_rows[row] = row.find_all('td')
+        
+        for row, cells in goal_rows.items():
+            if len(cells) >= 6:  # Ensure we have enough cells for goal data
+                # Extract goal information
+                event_number = cells[0].get_text(strip=True)
+                period = cells[1].get_text(strip=True)
+                period_type = cells[2].get_text(strip=True)
+                time_text = cells[3].get_text(strip=True)
+                event_type = cells[4].get_text(strip=True)
+                description = cells[5].get_text(strip=True)
+                
+                if event_type == 'GOAL':
+                    # Parse the goal description to extract scorer and assists
+                    # Format: "NJD #11 NOESEN(1), Snap , Off. Zone, 21 ft.\nAssist: #8 KOVACEVIC(1)"
+                    goal_info = self._parse_pl_goal_description(description, player_mappings)
+                    
+                    if goal_info:
+                        # Determine if this is a shootout goal
+                        is_shootout = period == '5' or period_type == 'SO'
+                        
+                        goal = {
+                            'goal_number': int(event_number) if event_number.isdigit() else 0,
+                            'period': int(period) if period.isdigit() else 1,
+                            'period_type': period_type,
+                            'time': time_text,
+                            'team': goal_info['team'],
+                            'team_id': self.team_abbrev_to_id.get(goal_info['team'], 0),
+                            'scorer_id': goal_info['scorer_id'],
+                            'scorer_name': goal_info['scorer_name'],
+                            'scorer_sweater': goal_info['scorer_sweater'],
+                            'assist1_id': goal_info.get('assist1_id'),
+                            'assist1_name': goal_info.get('assist1_name'),
+                            'assist1_sweater': goal_info.get('assist1_sweater'),
+                            'assist2_id': goal_info.get('assist2_id'),
+                            'assist2_name': goal_info.get('assist2_name'),
+                            'assist2_sweater': goal_info.get('assist2_sweater'),
+                            'is_shootout': is_shootout,
+                            'counts_for_stats': not is_shootout,  # Shootout goals don't count for player stats
+                            'source': 'html_pl'
+                        }
+                        
+                        goals.append(goal)
         
         return goals
     
@@ -1748,7 +1696,7 @@ class PlayerTeamGoalReconciliation:
                 html_total_goals=gs_goals,
                 goal_count_discrepancy=gs_discrepancy,
                 player_discrepancies=[],
-                reconciliation_status=gs_status
+                reconciliation_status=overall_status
             )
         
         return team_results
@@ -1920,13 +1868,6 @@ class PlayerTeamGoalReconciliation:
         # Extract shootout outcome from authoritative data
         shootout_outcome = self._extract_shootout_outcome(game_id)
         
-        # Pre-compute PL shootout goal counts (used to derive PL shootout outcome)
-        pl_so_counts: Dict[str, int] = {}
-        for team in [home_team, away_team]:
-            if team:
-                pl_so_counts[team] = sum(1 for goal in html_pl_goals 
-                                         if goal.get('team') == team and goal.get('is_shootout', False))
-        
         for team in [home_team, away_team]:
             if not team:
                 continue
@@ -1966,14 +1907,7 @@ class PlayerTeamGoalReconciliation:
             auth_shootout_outcome = 0
             gs_shootout_outcome = 1 if gs_shootout_goals > 0 else 0  # GS shows winning goal
             es_shootout_outcome = 0  # ES doesn't provide shootout outcome
-            # Compute PL shootout outcome from PL shootout goal counts
-            pl_shootout_outcome = 0
-            other_team = home_team if team == away_team else away_team
-            if team in pl_so_counts and other_team in pl_so_counts:
-                if pl_so_counts[team] > pl_so_counts[other_team]:
-                    pl_shootout_outcome = 1
-                else:
-                    pl_shootout_outcome = 0
+            pl_shootout_outcome = 0  # PL doesn't provide shootout outcome
             
             if shootout_outcome:
                 if team == shootout_outcome.get('away_team'):
@@ -2001,10 +1935,6 @@ class PlayerTeamGoalReconciliation:
             gs_total = gs_regulation + gs_overtime
             es_total = es_regulation + es_overtime
             pl_total = pl_regulation + pl_overtime
-            
-            # ES combined REG+OT comparison
-            es_combined_discrepancy = auth_total - es_total
-            es_combined_status = 'perfect' if es_combined_discrepancy == 0 else ('minor_discrepancy' if abs(es_combined_discrepancy) <= 1 else 'major_discrepancy')
             
             team_results[team] = TeamReconciliationResult(
                 team_id=self.team_abbrev_to_id.get(team, 0),
@@ -2043,11 +1973,6 @@ class PlayerTeamGoalReconciliation:
                 html_gs_goals=gs_total,
                 html_es_goals=es_total,
                 html_pl_goals=pl_total,
-                # ES combined REG+OT
-                auth_combined_goals=auth_total,
-                es_combined_goals=es_total,
-                es_combined_discrepancy=es_combined_discrepancy,
-                es_combined_status=es_combined_status,
                 gs_discrepancy=auth_total - gs_total,
                 es_discrepancy=auth_total - es_total,
                 pl_discrepancy=auth_total - pl_total,
@@ -2062,320 +1987,212 @@ class PlayerTeamGoalReconciliation:
         
         return team_results
     
-    
     def _reconcile_players_four_way(self, authoritative_goals: List[Dict], html_gs_goals: List[Dict], 
                                     html_es_goals: List[Dict], html_pl_goals: List[Dict], game_id: str) -> List[PlayerReconciliationResult]:
         """Reconcile player-level goal data across four sources with proper phase breakdown."""
         player_results = []
         
-        # Count goals and assists by phase for each player in authoritative data
-        auth_player_stats = defaultdict(lambda: {
-            'regulation_goals': 0, 'regulation_assists': 0,
-            'overtime_goals': 0, 'overtime_assists': 0,
-            'shootout_goals': 0,
-            'player_id': 0, 'name': '', 'sweater': 0, 'team': ''
-        })
+        # Count goals and assists for each player in authoritative data (only non-shootout goals count for stats)
+        auth_player_stats = defaultdict(lambda: {'goals': 0, 'assists': 0, 'player_id': 0, 'name': '', 'sweater': 0, 'team': ''})
         
         for goal in authoritative_goals:
-            period_type = goal.get('period_type', 'REGULAR')
-            scorer_id = goal.get('scorer_id')
-            
-            if scorer_id:
-                if period_type == 'REGULAR':
-                    auth_player_stats[scorer_id]['regulation_goals'] += 1
-                elif period_type == 'OVERTIME':
-                    auth_player_stats[scorer_id]['overtime_goals'] += 1
-                elif period_type == 'SHOOTOUT' or goal.get('is_shootout', False):
-                    auth_player_stats[scorer_id]['shootout_goals'] += 1
+            # Only count non-shootout goals for player statistics
+            if not goal.get('counts_for_stats', True):
+                continue
                 
+            # Count goals using player ID as key
+            scorer_id = goal.get('scorer_id')
+            if scorer_id:
+                auth_player_stats[scorer_id]['goals'] += 1
                 auth_player_stats[scorer_id]['player_id'] = scorer_id
                 auth_player_stats[scorer_id]['name'] = goal['scorer_name']
                 auth_player_stats[scorer_id]['sweater'] = goal['scorer_sweater']
                 auth_player_stats[scorer_id]['team'] = goal['team']
             
-            # Count assists (no assists in shootout)
-            if period_type != 'SHOOTOUT' and not goal.get('is_shootout', False):
-                assist1_id = goal.get('assist1_id')
-                if assist1_id:
-                    if period_type == 'REGULAR':
-                        auth_player_stats[assist1_id]['regulation_assists'] += 1
-                    elif period_type == 'OVERTIME':
-                        auth_player_stats[assist1_id]['overtime_assists'] += 1
-                    
-                    auth_player_stats[assist1_id]['player_id'] = assist1_id
-                    auth_player_stats[assist1_id]['name'] = goal['assist1_name']
-                    auth_player_stats[assist1_id]['sweater'] = goal['assist1_sweater']
-                    auth_player_stats[assist1_id]['team'] = goal['team']
-                
-                assist2_id = goal.get('assist2_id')
-                if assist2_id:
-                    if period_type == 'REGULAR':
-                        auth_player_stats[assist2_id]['regulation_assists'] += 1
-                    elif period_type == 'OVERTIME':
-                        auth_player_stats[assist2_id]['overtime_assists'] += 1
-                    
-                    auth_player_stats[assist2_id]['player_id'] = assist2_id
-                    auth_player_stats[assist2_id]['name'] = goal['assist2_name']
-                    auth_player_stats[assist2_id]['sweater'] = goal['assist2_sweater']
-                    auth_player_stats[assist2_id]['team'] = goal['team']
+            # Count assists
+            assist1_id = goal.get('assist1_id')
+            if assist1_id:
+                auth_player_stats[assist1_id]['assists'] += 1
+                auth_player_stats[assist1_id]['player_id'] = assist1_id
+                auth_player_stats[assist1_id]['name'] = goal['assist1_name']
+                auth_player_stats[assist1_id]['sweater'] = goal['assist1_sweater']
+                auth_player_stats[assist1_id]['team'] = goal['team']
+            
+            assist2_id = goal.get('assist2_id')
+            if assist2_id:
+                auth_player_stats[assist2_id]['assists'] += 1
+                auth_player_stats[assist2_id]['player_id'] = assist2_id
+                auth_player_stats[assist2_id]['name'] = goal['assist2_name']
+                auth_player_stats[assist2_id]['sweater'] = goal['assist2_sweater']
+                auth_player_stats[assist2_id]['team'] = goal['team']
         
-        # Count goals and assists by phase for each player in GS data
-        gs_player_stats = defaultdict(lambda: {
-            'regulation_goals': 0, 'regulation_assists': 0,
-            'overtime_goals': 0, 'overtime_assists': 0,
-            'shootout_goals': 0,
-            'player_id': 0, 'name': '', 'sweater': 0, 'team': ''
-        })
+        # Count goals and assists for each player in GS data (only non-shootout goals count for stats)
+        gs_player_stats = defaultdict(lambda: {'goals': 0, 'assists': 0, 'player_id': 0, 'name': '', 'sweater': 0, 'team': ''})
         
         for goal in html_gs_goals:
-            period_type = goal.get('period_type', 'REGULAR')
-            scorer_id = goal.get('scorer_id')
-            
-            if scorer_id:
-                if period_type == 'REGULAR':
-                    gs_player_stats[scorer_id]['regulation_goals'] += 1
-                elif period_type == 'OVERTIME':
-                    gs_player_stats[scorer_id]['overtime_goals'] += 1
-                elif period_type == 'SHOOTOUT' or goal.get('is_shootout', False):
-                    gs_player_stats[scorer_id]['shootout_goals'] += 1
+            # Only count non-shootout goals for player statistics
+            if not goal.get('counts_for_stats', True):
+                continue
                 
+            # Count goals using player ID as key
+            scorer_id = goal.get('scorer_id')
+            if scorer_id:
+                gs_player_stats[scorer_id]['goals'] += 1
                 gs_player_stats[scorer_id]['player_id'] = scorer_id
                 gs_player_stats[scorer_id]['name'] = goal['scorer_name']
                 gs_player_stats[scorer_id]['sweater'] = goal['scorer_sweater']
                 gs_player_stats[scorer_id]['team'] = goal['team']
             
-            # Count assists (no assists in shootout)
-            if period_type != 'SHOOTOUT' and not goal.get('is_shootout', False):
-                assist1_id = goal.get('assist1_id')
-                if assist1_id:
-                    if period_type == 'REGULAR':
-                        gs_player_stats[assist1_id]['regulation_assists'] += 1
-                    elif period_type == 'OVERTIME':
-                        gs_player_stats[assist1_id]['overtime_assists'] += 1
-                    
-                    gs_player_stats[assist1_id]['player_id'] = assist1_id
-                    gs_player_stats[assist1_id]['name'] = goal['assist1_name']
-                    gs_player_stats[assist1_id]['sweater'] = goal['assist1_sweater']
-                    gs_player_stats[assist1_id]['team'] = goal['team']
-                
-                assist2_id = goal.get('assist2_id')
-                if assist2_id:
-                    if period_type == 'REGULAR':
-                        gs_player_stats[assist2_id]['regulation_assists'] += 1
-                    elif period_type == 'OVERTIME':
-                        gs_player_stats[assist2_id]['overtime_assists'] += 1
-                    
-                    gs_player_stats[assist2_id]['player_id'] = assist2_id
-                    gs_player_stats[assist2_id]['name'] = goal['assist2_name']
-                    gs_player_stats[assist2_id]['sweater'] = goal['assist2_sweater']
-                    gs_player_stats[assist2_id]['team'] = goal['team']
+            # Count assists
+            assist1_id = goal.get('assist1_id')
+            if assist1_id:
+                gs_player_stats[assist1_id]['assists'] += 1
+                gs_player_stats[assist1_id]['player_id'] = assist1_id
+                gs_player_stats[assist1_id]['name'] = goal['assist1_name']
+                gs_player_stats[assist1_id]['sweater'] = goal['assist1_sweater']
+                gs_player_stats[assist1_id]['team'] = goal['team']
+            
+            assist2_id = goal.get('assist2_id')
+            if assist2_id:
+                gs_player_stats[assist2_id]['assists'] += 1
+                gs_player_stats[assist2_id]['player_id'] = assist2_id
+                gs_player_stats[assist2_id]['name'] = goal['assist2_name']
+                gs_player_stats[assist2_id]['sweater'] = goal['assist2_sweater']
+                gs_player_stats[assist2_id]['team'] = goal['team']
         
-        # Count goals and assists by phase for each player in ES data
-        es_player_stats = defaultdict(lambda: {
-            'regulation_goals': 0, 'regulation_assists': 0,
-            'overtime_goals': 0, 'overtime_assists': 0,
-            'shootout_goals': 0,
-            'player_id': 0, 'name': '', 'sweater': 0, 'team': ''
-        })
+        # Count goals and assists for each player in ES data (only non-shootout goals count for stats)
+        es_player_stats = defaultdict(lambda: {'goals': 0, 'assists': 0, 'player_id': 0, 'name': '', 'sweater': 0, 'team': ''})
         
         for goal in html_es_goals:
-            period_type = goal.get('period_type', 'REGULAR')
-            scorer_id = goal.get('scorer_id')
-            
-            if scorer_id:
-                if period_type == 'REGULAR':
-                    es_player_stats[scorer_id]['regulation_goals'] += 1
-                elif period_type == 'OVERTIME':
-                    es_player_stats[scorer_id]['overtime_goals'] += 1
-                elif period_type == 'SHOOTOUT' or goal.get('is_shootout', False):
-                    es_player_stats[scorer_id]['shootout_goals'] += 1
+            # Only count non-shootout goals for player statistics
+            if not goal.get('counts_for_stats', True):
+                continue
                 
+            # Count goals using player ID as key
+            scorer_id = goal.get('scorer_id')
+            if scorer_id:
+                es_player_stats[scorer_id]['goals'] += 1
                 es_player_stats[scorer_id]['player_id'] = scorer_id
                 es_player_stats[scorer_id]['name'] = goal['scorer_name']
                 es_player_stats[scorer_id]['sweater'] = goal['scorer_sweater']
                 es_player_stats[scorer_id]['team'] = goal['team']
-
-        # Augment ES assists directly from curated ES player statistics (assign to regulation by default)
-        try:
-            es_file = self.storage_path / 'json' / 'curate' / 'es' / f'es_{game_id[4:]}.json'
-            if es_file.exists():
-                with open(es_file, 'r') as ef:
-                    es_curated = json.load(ef)
-                # Merge home and visitor players
-                es_players = []
-                stats = es_curated.get('player_statistics', {})
-                es_players.extend(stats.get('home', []) or [])
-                es_players.extend(stats.get('visitor', []) or [])
-                for p in es_players:
-                    pid = p.get('player_id')
-                    if pid is None:
-                        continue
-                    assists_count = int(p.get('assists', 0) or 0)
-                    goals_count = int(p.get('goals', 0) or 0)
-                    # Ensure player record exists
-                    _ = es_player_stats[pid]
-                    es_player_stats[pid]['player_id'] = pid
-                    es_player_stats[pid]['name'] = es_player_stats[pid]['name'] or p.get('name', '')
-                    es_player_stats[pid]['sweater'] = es_player_stats[pid]['sweater'] or p.get('sweater_number', 0)
-                    team_abbrev = es_player_stats[pid]['team'] or (es_curated.get('game_header', {}).get('home_team', {}).get('abbreviation', '') if p.get('team_type') == 'home' else es_curated.get('game_header', {}).get('visitor_team', {}).get('abbreviation', ''))
-                    es_player_stats[pid]['team'] = team_abbrev
-                    # Assign totals to regulation buckets by convention (ES lacks phase breakdown)
-                    es_player_stats[pid]['regulation_assists'] = assists_count
-                    # If we reconstructed fewer goals than ES total, align to ES totals
-                    if (es_player_stats[pid]['regulation_goals'] + es_player_stats[pid]['overtime_goals'] + es_player_stats[pid]['shootout_goals']) < goals_count:
-                        es_player_stats[pid]['regulation_goals'] = goals_count
-        except Exception:
-            # Non-fatal: keep existing es_player_stats
-            pass
+            
+            # Count assists
+            assist1_id = goal.get('assist1_id')
+            if assist1_id:
+                es_player_stats[assist1_id]['assists'] += 1
+                es_player_stats[assist1_id]['player_id'] = assist1_id
+                es_player_stats[assist1_id]['name'] = goal['assist1_name']
+                es_player_stats[assist1_id]['sweater'] = goal['assist1_sweater']
+                es_player_stats[assist1_id]['team'] = goal['team']
+            
+            assist2_id = goal.get('assist2_id')
+            if assist2_id:
+                es_player_stats[assist2_id]['assists'] += 1
+                es_player_stats[assist2_id]['player_id'] = assist2_id
+                es_player_stats[assist2_id]['name'] = goal['assist2_name']
+                es_player_stats[assist2_id]['sweater'] = goal['assist2_sweater']
+                es_player_stats[assist2_id]['team'] = goal['team']
         
-        # Count goals by phase for each player in PL data (PL doesn't have assists)
-        pl_player_stats = defaultdict(lambda: {
-            'regulation_goals': 0, 'regulation_assists': 0,
-            'overtime_goals': 0, 'overtime_assists': 0,
-            'shootout_goals': 0,
-            'player_id': 0, 'name': '', 'sweater': 0, 'team': ''
-        })
+        # Count goals and assists for each player in PL data (only non-shootout goals count for stats)
+        pl_player_stats = defaultdict(lambda: {'goals': 0, 'assists': 0, 'player_id': 0, 'name': '', 'sweater': 0, 'team': ''})
         
         for goal in html_pl_goals:
-            period_type = goal.get('period_type', 'REGULAR')
-            scorer_id = goal.get('scorer_id')
-            
-            if scorer_id:
-                if period_type == 'REGULAR':
-                    pl_player_stats[scorer_id]['regulation_goals'] += 1
-                elif period_type == 'OVERTIME':
-                    pl_player_stats[scorer_id]['overtime_goals'] += 1
-                elif period_type == 'SHOOTOUT' or goal.get('is_shootout', False):
-                    pl_player_stats[scorer_id]['shootout_goals'] += 1
+            # Only count non-shootout goals for player statistics
+            if not goal.get('counts_for_stats', True):
+                continue
                 
+            # Count goals using player ID as key
+            scorer_id = goal.get('scorer_id')
+            if scorer_id:
+                pl_player_stats[scorer_id]['goals'] += 1
                 pl_player_stats[scorer_id]['player_id'] = scorer_id
                 pl_player_stats[scorer_id]['name'] = goal['scorer_name']
                 pl_player_stats[scorer_id]['sweater'] = goal['scorer_sweater']
                 pl_player_stats[scorer_id]['team'] = goal['team']
+            
+            # Count assists
+            assist1_id = goal.get('assist1_id')
+            if assist1_id:
+                pl_player_stats[assist1_id]['assists'] += 1
+                pl_player_stats[assist1_id]['player_id'] = assist1_id
+                pl_player_stats[assist1_id]['name'] = goal['assist1_name']
+                pl_player_stats[assist1_id]['sweater'] = goal['assist1_sweater']
+                pl_player_stats[assist1_id]['team'] = goal['team']
+            
+            assist2_id = goal.get('assist2_id')
+            if assist2_id:
+                pl_player_stats[assist2_id]['assists'] += 1
+                pl_player_stats[assist2_id]['player_id'] = assist2_id
+                pl_player_stats[assist2_id]['name'] = goal['assist2_name']
+                pl_player_stats[assist2_id]['sweater'] = goal['assist2_sweater']
+                pl_player_stats[assist2_id]['team'] = goal['team']
         
-        # Get all unique players across all sources
-        all_player_ids = set()
-        all_player_ids.update(auth_player_stats.keys())
-        all_player_ids.update(gs_player_stats.keys())
-        all_player_ids.update(es_player_stats.keys())
-        all_player_ids.update(pl_player_stats.keys())
+        # Compare player statistics using player IDs
+        all_player_ids = set(list(auth_player_stats.keys()) + list(gs_player_stats.keys()) + 
+                           list(es_player_stats.keys()) + list(pl_player_stats.keys()))
         
-        # Create reconciliation results for each player
         for player_id in all_player_ids:
-            auth_stats = auth_player_stats[player_id]
-            gs_stats = gs_player_stats[player_id]
-            es_stats = es_player_stats[player_id]
-            pl_stats = pl_player_stats[player_id]
+            auth_stats = auth_player_stats.get(player_id, {'goals': 0, 'assists': 0, 'player_id': 0, 'name': '', 'sweater': 0, 'team': ''})
+            gs_stats = gs_player_stats.get(player_id, {'goals': 0, 'assists': 0, 'player_id': 0, 'name': '', 'sweater': 0, 'team': ''})
+            es_stats = es_player_stats.get(player_id, {'goals': 0, 'assists': 0, 'player_id': 0, 'name': '', 'sweater': 0, 'team': ''})
+            pl_stats = pl_player_stats.get(player_id, {'goals': 0, 'assists': 0, 'player_id': 0, 'name': '', 'sweater': 0, 'team': ''})
             
-            # Use authoritative data as primary source for player info
-            player_name = auth_stats['name'] or gs_stats['name'] or es_stats['name'] or pl_stats['name']
-            sweater_number = auth_stats['sweater'] or gs_stats['sweater'] or es_stats['sweater'] or pl_stats['sweater']
-            team = auth_stats['team'] or gs_stats['team'] or es_stats['team'] or pl_stats['team']
+            gs_goal_discrepancy = auth_stats['goals'] - gs_stats['goals']
+            gs_assist_discrepancy = auth_stats['assists'] - gs_stats['assists']
+            es_goal_discrepancy = auth_stats['goals'] - es_stats['goals']
+            es_assist_discrepancy = auth_stats['assists'] - es_stats['assists']
+            pl_goal_discrepancy = auth_stats['goals'] - pl_stats['goals']
+            pl_assist_discrepancy = auth_stats['assists'] - pl_stats['assists']
             
-            # Calculate discrepancies by phase
-            regulation_goal_discrepancy = auth_stats['regulation_goals'] - gs_stats['regulation_goals']
-            regulation_assist_discrepancy = auth_stats['regulation_assists'] - es_stats['regulation_assists']
-            overtime_goal_discrepancy = auth_stats['overtime_goals'] - gs_stats['overtime_goals']
-            overtime_assist_discrepancy = auth_stats['overtime_assists'] - es_stats['overtime_assists']
-            shootout_goal_discrepancy = auth_stats['shootout_goals'] - pl_stats['shootout_goals']
+            # Determine reconciliation status based on all sources
+            # Note: PL HTML doesn't include assists, so exclude from assist comparisons
+            gs_total_discrepancy = abs(gs_goal_discrepancy) + abs(gs_assist_discrepancy)
+            es_total_discrepancy = abs(es_goal_discrepancy) + abs(es_assist_discrepancy)
+            pl_goal_discrepancy_only = abs(pl_goal_discrepancy)  # PL only for goals, not assists
             
-            # Determine overall reconciliation status
-            total_discrepancy = (abs(regulation_goal_discrepancy) + abs(regulation_assist_discrepancy) + 
-                               abs(overtime_goal_discrepancy) + abs(overtime_assist_discrepancy) + 
-                               abs(shootout_goal_discrepancy))
-            
-            if total_discrepancy == 0:
+            # Primary reconciliation is based on GS (Game Summary) - the most reliable HTML source
+            # ES and PL are used for additional validation but don't override GS results
+            # For assists, only compare GS and ES (PL doesn't have assist data)
+            if gs_total_discrepancy == 0:
                 status = 'perfect'
-            elif total_discrepancy <= 2:
+            elif gs_total_discrepancy <= 1:
                 status = 'minor_discrepancy'
             else:
                 status = 'major_discrepancy'
             
-            # Get player position (default to Forward if not available)
-            position = "F"  # Default position
-            
-            # Calculate backward compatibility totals
-            auth_total_goals = auth_stats['regulation_goals'] + auth_stats['overtime_goals']
-            auth_total_assists = auth_stats['regulation_assists'] + auth_stats['overtime_assists']
-            gs_total_goals = gs_stats['regulation_goals'] + gs_stats['overtime_goals']
-            gs_total_assists = gs_stats['regulation_assists'] + gs_stats['overtime_assists']
-            es_total_goals = es_stats['regulation_goals'] + es_stats['overtime_goals']
-            es_total_assists = es_stats['regulation_assists'] + es_stats['overtime_assists']
-            pl_total_goals = pl_stats['regulation_goals'] + pl_stats['overtime_goals']
-            
-            # ES combined REG+OT comparison
-            es_combined_goal_discrepancy = auth_total_goals - es_total_goals
-            es_combined_assist_discrepancy = auth_total_assists - es_total_assists
-            es_combined_status = 'perfect' if (es_combined_goal_discrepancy == 0 and es_combined_assist_discrepancy == 0) else (
-                'minor_discrepancy' if (abs(es_combined_goal_discrepancy) + abs(es_combined_assist_discrepancy)) <= 2 else 'major_discrepancy'
-            )
+            # Use authoritative data for player info (more reliable)
+            player_name = auth_stats['name'] or gs_stats['name'] or es_stats['name'] or pl_stats['name']
+            sweater_number = auth_stats['sweater'] or gs_stats['sweater'] or es_stats['sweater'] or pl_stats['sweater']
+            team = auth_stats['team'] or gs_stats['team'] or es_stats['team'] or pl_stats['team']
             
             player_result = PlayerReconciliationResult(
                 player_id=player_id,
                 player_name=player_name,
                 sweater_number=sweater_number,
                 team=team,
-                position=position,
-                
-                # Phase breakdown
-                auth_regulation_goals=auth_stats['regulation_goals'],
-                auth_regulation_assists=auth_stats['regulation_assists'],
-                gs_regulation_goals=gs_stats['regulation_goals'],
-                gs_regulation_assists=gs_stats['regulation_assists'],
-                es_regulation_goals=es_stats['regulation_goals'],
-                es_regulation_assists=es_stats['regulation_assists'],
-                pl_regulation_goals=pl_stats['regulation_goals'],
-                pl_regulation_assists=0,  # PL doesn't have assists
-                
-                auth_overtime_goals=auth_stats['overtime_goals'],
-                auth_overtime_assists=auth_stats['overtime_assists'],
-                gs_overtime_goals=gs_stats['overtime_goals'],
-                gs_overtime_assists=gs_stats['overtime_assists'],
-                es_overtime_goals=es_stats['overtime_goals'],
-                es_overtime_assists=es_stats['overtime_assists'],
-                pl_overtime_goals=pl_stats['overtime_goals'],
-                pl_overtime_assists=0,  # PL doesn't have assists
-                
-                auth_shootout_goals=auth_stats['shootout_goals'],
-                gs_shootout_goals=gs_stats['shootout_goals'],
-                es_shootout_goals=es_stats['shootout_goals'],
-                pl_shootout_goals=pl_stats['shootout_goals'],
-                
-                regulation_goal_discrepancy=regulation_goal_discrepancy,
-                regulation_assist_discrepancy=regulation_assist_discrepancy,
-                overtime_goal_discrepancy=overtime_goal_discrepancy,
-                overtime_assist_discrepancy=overtime_assist_discrepancy,
-                shootout_goal_discrepancy=shootout_goal_discrepancy,
-                
-                # ES combined totals
-                auth_combined_goals=auth_total_goals,
-                auth_combined_assists=auth_total_assists,
-                es_combined_goals=es_total_goals,
-                es_combined_assists=es_total_assists,
-                es_combined_goal_discrepancy=es_combined_goal_discrepancy,
-                es_combined_assist_discrepancy=es_combined_assist_discrepancy,
-                es_combined_status=es_combined_status,
-                
-                reconciliation_status=status,
-                
-                # Backward compatibility fields
-                authoritative_goals=auth_total_goals,
-                authoritative_assists=auth_total_assists,
-                gs_html_goals=gs_total_goals,
-                gs_html_assists=gs_total_assists,
-                es_html_goals=es_total_goals,
-                es_html_assists=es_total_assists,
-                pl_html_goals=pl_total_goals,
-                pl_html_assists=0,  # PL doesn't have assists
-                html_goals=gs_total_goals,  # Use GS as primary
-                html_assists=es_total_assists,  # Use ES as primary
-                goal_discrepancy=auth_total_goals - gs_total_goals,
-                assist_discrepancy=auth_total_assists - es_total_assists
+                authoritative_goals=auth_stats['goals'],
+                authoritative_assists=auth_stats['assists'],
+                # Individual HTML source breakdowns
+                gs_html_goals=gs_stats['goals'],
+                gs_html_assists=gs_stats['assists'],
+                es_html_goals=es_stats['goals'],
+                es_html_assists=es_stats['assists'],
+                pl_html_goals=pl_stats['goals'],
+                pl_html_assists=pl_stats['assists'],
+                # Combined HTML totals (for backward compatibility)
+                html_goals=gs_stats['goals'],  # Keep for backward compatibility
+                html_assists=gs_stats['assists'],  # Keep for backward compatibility
+                # Discrepancies (based on GS as primary)
+                goal_discrepancy=gs_goal_discrepancy,  # Keep for backward compatibility
+                assist_discrepancy=gs_assist_discrepancy,  # Keep for backward compatibility
+                reconciliation_status=status
             )
             
             player_results.append(player_result)
         
         return player_results
+    
     def _identify_critical_discrepancies(self, team_results: Dict[str, TeamReconciliationResult], 
                                        player_results: List[PlayerReconciliationResult]) -> List[Dict[str, Any]]:
         """Identify critical discrepancies that require attention."""
