@@ -1811,6 +1811,7 @@ class HTMLReportParser:
     def parse_event_summary_data(self, soup: BeautifulSoup, file_path: Optional[str] = None) -> Dict[str, Any]:
         """
         Parse Event Summary (ES) data with detailed player statistics and penalty information.
+        Enhanced version with improved BeautifulSoup parsing and comprehensive data extraction.
         
         Args:
             soup: BeautifulSoup object of the HTML content
@@ -1827,36 +1828,160 @@ class HTMLReportParser:
             'player_statistics': {
                 'visitor': [],
                 'home': []
+            },
+            'team_summaries': {
+                'visitor': {},
+                'home': {}
+            },
+            'faceoff_summaries': {
+                'visitor': {},
+                'home': {}
+            },
+            'parsing_metadata': {
+                'timestamp': datetime.now().isoformat(),
+                'file_path': str(file_path) if file_path else None,
+                'parser_version': '2.0',
+                'success': True,
+                'errors': []
             }
         }
         
         try:
             # Parse game header (teams, score, date, venue)
-            data['game_header'] = self._parse_game_header(soup, file_path)
+            data['game_header'] = self._parse_game_header_enhanced(soup, file_path)
             
             # Store game data and ID for reference data lookup
             self._current_game_data = data['game_header']
             self._current_game_id = data['game_header'].get('game_info', {}).get('game_id')
             
-            # Parse visitor team player statistics
-            data['player_statistics']['visitor'] = self._parse_team_player_stats(soup, 'visitor')
+            # Parse visitor team player statistics with enhanced parsing
+            data['player_statistics']['visitor'] = self._parse_team_player_stats_enhanced(soup, 'visitor')
             
-            # Parse home team player statistics  
-            data['player_statistics']['home'] = self._parse_team_player_stats(soup, 'home')
+            # Parse home team player statistics with enhanced parsing
+            data['player_statistics']['home'] = self._parse_team_player_stats_enhanced(soup, 'home')
             
             # Parse team summary statistics
-            data['visitor_team_stats'] = self._parse_team_summary_stats(soup, 'visitor')
-            data['home_team_stats'] = self._parse_team_summary_stats(soup, 'home')
+            data['visitor_team_stats'] = self._parse_team_summary_stats_enhanced(soup, 'visitor')
+            data['home_team_stats'] = self._parse_team_summary_stats_enhanced(soup, 'home')
+            
+            # Parse faceoff summaries
+            data['faceoff_summaries'] = self._parse_faceoff_summaries_enhanced(soup)
+            
+            # Parse team summaries (goals, shots, etc.)
+            data['team_summaries'] = self._parse_team_summaries_enhanced(soup)
+            
+            # Validate parsed data
+            self._validate_es_data(data)
             
         except Exception as e:
             self.logger.error(f"Error parsing event summary data: {e}")
             data['error'] = str(e)
+            data['parsing_metadata']['success'] = False
+            data['parsing_metadata']['errors'].append(str(e))
         
         return data
     
-    def _parse_team_player_stats(self, soup: BeautifulSoup, team_type: str) -> List[Dict[str, Any]]:
+    def _parse_game_header_enhanced(self, soup: BeautifulSoup, file_path: Optional[str] = None) -> Dict[str, Any]:
         """
-        Parse player statistics for a specific team from Event Summary.
+        Enhanced game header parsing with better BeautifulSoup usage.
+        
+        Args:
+            soup: BeautifulSoup object of the HTML content
+            file_path: Optional file path for game ID extraction
+            
+        Returns:
+            Dictionary containing game header information
+        """
+        header_data = {
+            'game_info': {},
+            'visitor_team': {},
+            'home_team': {},
+            'venue_info': {},
+            'game_details': {}
+        }
+        
+        try:
+            # Extract game ID from filename if provided
+            if file_path:
+                game_id_match = re.search(r'ES(\d{6})\.HTM', file_path)
+                if game_id_match:
+                    header_data['game_info']['game_id'] = f"2024{game_id_match.group(1)}"
+            
+            # Parse visitor team information
+            visitor_table = soup.find('table', {'id': 'Visitor'})
+            if visitor_table:
+                # Extract team name and score
+                team_name_elem = visitor_table.find('td', string=re.compile(r'GAME \d+ AWAY GAME \d+'))
+                if team_name_elem:
+                    team_text = team_name_elem.get_text(strip=True)
+                    team_name_match = re.search(r'^([^\\n]+)', team_text)
+                    if team_name_match:
+                        header_data['visitor_team']['name'] = team_name_match.group(1).strip()
+                
+                # Extract score
+                score_elem = visitor_table.find('td', style=re.compile(r'font-size: 40px'))
+                if score_elem:
+                    header_data['visitor_team']['score'] = int(score_elem.get_text(strip=True))
+                
+                # Extract team logo/abbreviation from image src
+                logo_img = visitor_table.find('img', src=re.compile(r'logoc'))
+                if logo_img:
+                    logo_src = logo_img.get('src', '')
+                    abbrev_match = re.search(r'logoc([a-z]+)', logo_src)
+                    if abbrev_match:
+                        header_data['visitor_team']['abbreviation'] = abbrev_match.group(1).upper()
+            
+            # Parse home team information (similar structure)
+            home_table = soup.find('table', {'id': 'Home'})
+            if home_table:
+                # Extract team name and score
+                team_name_elem = home_table.find('td', string=re.compile(r'GAME \d+ HOME GAME \d+'))
+                if team_name_elem:
+                    team_text = team_name_elem.get_text(strip=True)
+                    team_name_match = re.search(r'^([^\\n]+)', team_text)
+                    if team_name_match:
+                        header_data['home_team']['name'] = team_name_match.group(1).strip()
+                
+                # Extract score
+                score_elem = home_table.find('td', style=re.compile(r'font-size: 40px'))
+                if score_elem:
+                    header_data['home_team']['score'] = int(score_elem.get_text(strip=True))
+                
+                # Extract team logo/abbreviation from image src
+                logo_img = home_table.find('img', src=re.compile(r'logoc'))
+                if logo_img:
+                    logo_src = logo_img.get('src', '')
+                    abbrev_match = re.search(r'logoc([a-z]+)', logo_src)
+                    if abbrev_match:
+                        header_data['home_team']['abbreviation'] = abbrev_match.group(1).upper()
+            
+            # Parse game info table
+            game_info_table = soup.find('table', {'id': 'GameInfo'})
+            if game_info_table:
+                # Extract date and venue information
+                rows = game_info_table.find_all('tr')
+                for row in rows:
+                    cells = row.find_all('td')
+                    if len(cells) >= 2:
+                        key = cells[0].get_text(strip=True)
+                        value = cells[1].get_text(strip=True)
+                        
+                        if 'Date' in key:
+                            header_data['game_info']['date'] = value
+                        elif 'Venue' in key:
+                            header_data['venue_info']['name'] = value
+                        elif 'Attendance' in key:
+                            header_data['venue_info']['attendance'] = value
+            
+        except Exception as e:
+            self.logger.error(f"Error parsing enhanced game header: {e}")
+            header_data['error'] = str(e)
+        
+        return header_data
+    
+    def _parse_team_player_stats_enhanced(self, soup: BeautifulSoup, team_type: str) -> List[Dict[str, Any]]:
+        """
+        Enhanced player statistics parsing with improved BeautifulSoup usage and better data validation.
         
         Args:
             soup: BeautifulSoup object of the HTML content
@@ -1868,48 +1993,694 @@ class HTMLReportParser:
         players = []
         
         try:
-            # Find tables with player data (tables with many player rows)
+            # Find the team-specific section using BeautifulSoup selectors
+            # Look for the specific team section heading
+            if team_type == 'visitor':
+                team_section = soup.find('td', class_='visitorsectionheading')
+            else:
+                team_section = soup.find('td', class_='homesectionheading')
+            
+            if not team_section:
+                self.logger.warning(f"Could not find {team_type} team section")
+                return players
+            
+            # Find the parent table containing player data
+            team_table = team_section.find_parent('table')
+            if not team_table:
+                self.logger.warning(f"Could not find {team_type} team table")
+                return players
+            
+            # Find all rows in the table
+            all_rows = team_table.find_all('tr')
+            
+            # Find the index of the current team's section heading
+            team_section_row = None
+            for i, row in enumerate(all_rows):
+                if team_section in row.find_all('td'):
+                    team_section_row = i
+                    break
+            
+            if team_section_row is None:
+                self.logger.warning(f"Could not find {team_type} team section row")
+                return players
+            
+            # Find the next team's section heading to know where to stop
+            next_team_section_row = None
+            for i in range(team_section_row + 1, len(all_rows)):
+                row = all_rows[i]
+                # Look for the other team's section heading
+                other_team_class = 'homesectionheading' if team_type == 'visitor' else 'visitorsectionheading'
+                if row.find('td', class_=other_team_class):
+                    next_team_section_row = i
+                    break
+            
+            # If no next team found, use the end of the table
+            if next_team_section_row is None:
+                next_team_section_row = len(all_rows)
+            
+            # Extract player rows only from this team's section
+            player_rows = []
+            for i in range(team_section_row + 1, next_team_section_row):
+                row = all_rows[i]
+                cells = row.find_all('td')
+                if len(cells) >= 25:  # Player stats tables have 25+ columns
+                    first_cell_text = cells[0].get_text(strip=True)
+                    if re.match(r'^\d+$', first_cell_text):  # First cell is a sweater number
+                        player_rows.append(cells)
+            
+            # Process each player row
+            for cells in player_rows:
+                player_stats = self._extract_player_stats_from_row_enhanced(cells, team_type)
+                if player_stats:
+                    # Check for duplicates
+                    is_duplicate = any(
+                        existing.get('sweater_number') == player_stats.get('sweater_number') and
+                        existing.get('name') == player_stats.get('name')
+                        for existing in players
+                    )
+                    
+                    if not is_duplicate:
+                        players.append(player_stats)
+            
+        except Exception as e:
+            self.logger.error(f"Error parsing enhanced {team_type} team player stats: {e}")
+        
+        return players
+    
+    def _extract_player_stats_from_row_enhanced(self, cells: List, team_type: str) -> Dict[str, Any]:
+        """
+        Enhanced player statistics extraction with better BeautifulSoup usage and comprehensive data validation.
+        
+        Args:
+            cells: List of BeautifulSoup td elements
+            team_type: 'visitor' or 'home'
+            
+        Returns:
+            Dictionary with player statistics
+        """
+        try:
+            # Validate input
+            if not isinstance(cells, list) or len(cells) < 25:
+                return None
+            
+            # Extract basic player info with validation
+            sweater_text = cells[0].get_text(strip=True)
+            if not re.match(r'^\d+$', sweater_text):
+                return None
+            
+            sweater_number = int(sweater_text)
+            position = cells[1].get_text(strip=True)
+            player_name = cells[2].get_text(strip=True)
+            
+            # Get team ID from game header data
+            team_id = None
+            if hasattr(self, '_current_game_data') and self._current_game_data:
+                if team_type == 'visitor':
+                    team_id = self._current_game_data.get('visitor_team', {}).get('id')
+                else:
+                    team_id = self._current_game_data.get('home_team', {}).get('id')
+            
+            # Use reference data to get player ID and full name
+            player_id = None
+            resolved_name = player_name
+            if team_id:
+                resolved_name = self._resolve_player_name(team_id, sweater_number, player_name)
+                
+                # Get player ID from reference data
+                boxscore_data = self.reference_data.get_boxscore_by_id(self._current_game_id) if hasattr(self, '_current_game_id') else None
+                if boxscore_data:
+                    team_key = 'awayTeam' if team_type == 'visitor' else 'homeTeam'
+                    player_stats = boxscore_data.get('playerByGameStats', {}).get(team_key, {})
+                    for player_type in ['forwards', 'defense', 'goalies']:
+                        for player in player_stats.get(player_type, []):
+                            if player.get('sweaterNumber') == sweater_number:
+                                player_id = player.get('playerId')
+                                break
+                        if player_id:
+                            break
+            
+            # Extract statistics with enhanced validation
+            goals = self._safe_int_enhanced(cells[3].get_text(strip=True))
+            assists = self._safe_int_enhanced(cells[4].get_text(strip=True))
+            points = self._safe_int_enhanced(cells[5].get_text(strip=True))
+            plus_minus = self._safe_int_enhanced(cells[6].get_text(strip=True))
+            penalty_number = self._safe_int_enhanced(cells[7].get_text(strip=True))
+            penalty_minutes = self._safe_int_enhanced(cells[8].get_text(strip=True))
+            
+            # Time on Ice data with better parsing
+            toi_total = self._parse_time_string(cells[9].get_text(strip=True))
+            shifts = self._safe_int_enhanced(cells[10].get_text(strip=True))
+            avg_shift = self._parse_time_string(cells[11].get_text(strip=True))
+            toi_pp = self._parse_time_string(cells[12].get_text(strip=True))
+            toi_sh = self._parse_time_string(cells[13].get_text(strip=True))
+            toi_ev = self._parse_time_string(cells[14].get_text(strip=True))
+            
+            # Additional stats with validation
+            shots = self._safe_int_enhanced(cells[15].get_text(strip=True))
+            attempts_blocked = self._safe_int_enhanced(cells[16].get_text(strip=True))
+            missed_shots = self._safe_int_enhanced(cells[17].get_text(strip=True))
+            hits = self._safe_int_enhanced(cells[18].get_text(strip=True))
+            giveaways = self._safe_int_enhanced(cells[19].get_text(strip=True))
+            takeaways = self._safe_int_enhanced(cells[20].get_text(strip=True))
+            blocked_shots = self._safe_int_enhanced(cells[21].get_text(strip=True))
+            faceoffs_won = self._safe_int_enhanced(cells[22].get_text(strip=True))
+            faceoffs_lost = self._safe_int_enhanced(cells[23].get_text(strip=True))
+            faceoff_percentage = self._safe_float_enhanced(cells[24].get_text(strip=True))
+            
+            return {
+                'player_id': player_id,
+                'sweater_number': sweater_number,
+                'position': position,
+                'name': resolved_name,
+                'original_name': player_name,
+                'team_id': team_id,
+                'team_type': team_type,
+                'goals': goals,
+                'assists': assists,
+                'points': points,
+                'plus_minus': plus_minus,
+                'penalty_number': penalty_number,
+                'penalty_minutes': penalty_minutes,
+                'time_on_ice': {
+                    'total': toi_total,
+                    'shifts': shifts,
+                    'avg_shift': avg_shift,
+                    'power_play': toi_pp,
+                    'short_handed': toi_sh,
+                    'even_strength': toi_ev
+                },
+                'shots': shots,
+                'attempts_blocked': attempts_blocked,
+                'missed_shots': missed_shots,
+                'hits': hits,
+                'giveaways': giveaways,
+                'takeaways': takeaways,
+                'blocked_shots': blocked_shots,
+                'faceoffs_won': faceoffs_won,
+                'faceoffs_lost': faceoffs_lost,
+                'faceoff_percentage': faceoff_percentage,
+                'parsing_metadata': {
+                    'extracted_at': datetime.now().isoformat(),
+                    'data_quality': self._assess_player_data_quality(goals, assists, points, plus_minus)
+                }
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error extracting enhanced player stats from row: {e}")
+            return None
+    
+    def _safe_int_enhanced(self, text: str) -> int:
+        """Enhanced integer parsing with better error handling."""
+        if not text or text.strip() == '' or text.strip() == '&nbsp;':
+            return 0
+        
+        # Clean the text
+        cleaned_text = text.strip().replace('&nbsp;', '').replace('+', '')
+        
+        # Use regex to extract numeric value
+        match = re.search(r'-?\d+', cleaned_text)
+        if match:
+            return int(match.group())
+        return 0
+    
+    def _safe_float_enhanced(self, text: str) -> float:
+        """Enhanced float parsing with better error handling."""
+        if not text or text.strip() == '' or text.strip() == '&nbsp;':
+            return 0.0
+        
+        # Clean the text
+        cleaned_text = text.strip().replace('&nbsp;', '').replace('%', '')
+        
+        # Use regex to extract numeric value
+        match = re.search(r'-?\d+\.?\d*', cleaned_text)
+        if match:
+            return float(match.group())
+        return 0.0
+    
+    def _parse_time_string(self, time_str: str) -> str:
+        """Parse time string and return in consistent format."""
+        if not time_str or time_str.strip() == '' or time_str.strip() == '&nbsp;':
+            return '00:00'
+        
+        # Clean the time string
+        cleaned_time = time_str.strip().replace('&nbsp;', '')
+        
+        # Validate time format (MM:SS)
+        if re.match(r'^\d{1,2}:\d{2}$', cleaned_time):
+            return cleaned_time
+        
+        return '00:00'
+    
+    def _assess_player_data_quality(self, goals: int, assists: int, points: int, plus_minus: int) -> str:
+        """Assess the quality of player data based on logical consistency."""
+        if points == goals + assists:
+            return 'high'
+        elif abs(points - (goals + assists)) <= 1:
+            return 'medium'
+        else:
+            return 'low'
+    
+    def _parse_team_summary_stats_enhanced(self, soup: BeautifulSoup, team_type: str) -> Dict[str, Any]:
+        """
+        Enhanced team summary statistics parsing with better BeautifulSoup usage.
+        
+        Args:
+            soup: BeautifulSoup object of the HTML content
+            team_type: 'visitor' or 'home'
+            
+        Returns:
+            Dictionary containing team summary statistics
+        """
+        team_stats = {}
+        
+        try:
+            # Find team summary section
+            team_section = soup.find('td', class_=re.compile(r'visitorsectionheading|homesectionheading'))
+            if not team_section:
+                return team_stats
+            
+            # Find the parent table containing team summary data
+            team_table = team_section.find_parent('table')
+            if not team_table:
+                return team_stats
+            
+            # Look for team summary rows (typically have fewer columns than player rows)
+            for row in team_table.find_all('tr'):
+                cells = row.find_all('td')
+                if len(cells) >= 10 and len(cells) < 25:  # Team summary rows have fewer columns
+                    # Check if this is a team summary row
+                    first_cell_text = cells[0].get_text(strip=True)
+                    if not re.match(r'^\d+$', first_cell_text):  # Not a player row
+                        # This might be a team summary row
+                        team_stats = self._extract_team_summary_from_row(cells, team_type)
+                        break
+            
+        except Exception as e:
+            self.logger.error(f"Error parsing enhanced team summary stats for {team_type}: {e}")
+        
+        return team_stats
+    
+    def _extract_team_summary_from_row(self, cells: List, team_type: str) -> Dict[str, Any]:
+        """Extract team summary statistics from a table row."""
+        try:
+            if len(cells) < 10:
+                return {}
+            
+            return {
+                'team_type': team_type,
+                'goals': self._safe_int_enhanced(cells[3].get_text(strip=True)) if len(cells) > 3 else 0,
+                'assists': self._safe_int_enhanced(cells[4].get_text(strip=True)) if len(cells) > 4 else 0,
+                'points': self._safe_int_enhanced(cells[5].get_text(strip=True)) if len(cells) > 5 else 0,
+                'plus_minus': self._safe_int_enhanced(cells[6].get_text(strip=True)) if len(cells) > 6 else 0,
+                'penalty_minutes': self._safe_int_enhanced(cells[8].get_text(strip=True)) if len(cells) > 8 else 0,
+                'shots': self._safe_int_enhanced(cells[15].get_text(strip=True)) if len(cells) > 15 else 0,
+                'hits': self._safe_int_enhanced(cells[18].get_text(strip=True)) if len(cells) > 18 else 0,
+                'blocked_shots': self._safe_int_enhanced(cells[21].get_text(strip=True)) if len(cells) > 21 else 0,
+                'faceoffs_won': self._safe_int_enhanced(cells[22].get_text(strip=True)) if len(cells) > 22 else 0,
+                'faceoffs_lost': self._safe_int_enhanced(cells[23].get_text(strip=True)) if len(cells) > 23 else 0,
+                'faceoff_percentage': self._safe_float_enhanced(cells[24].get_text(strip=True)) if len(cells) > 24 else 0.0
+            }
+        except Exception as e:
+            self.logger.error(f"Error extracting team summary from row: {e}")
+            return {}
+    
+    def _parse_faceoff_summaries_enhanced(self, soup: BeautifulSoup) -> Dict[str, Any]:
+        """
+        Enhanced faceoff summaries parsing with better BeautifulSoup usage.
+        
+        Args:
+            soup: BeautifulSoup object of the HTML content
+            
+        Returns:
+            Dictionary containing faceoff summaries for both teams
+        """
+        faceoff_data = {
+            'visitor': {},
+            'home': {}
+        }
+        
+        try:
+            # Find faceoff summary section
+            faceoff_section = soup.find('td', string=re.compile(r'FACE-OFF SUMMARY'))
+            if not faceoff_section:
+                return faceoff_data
+            
+            # Find the parent table containing faceoff data
+            faceoff_table = faceoff_section.find_parent('table')
+            if not faceoff_table:
+                return faceoff_data
+            
+            # Parse faceoff data for both teams
+            faceoff_rows = faceoff_table.find_all('tr', class_=re.compile(r'oddColor|evenColor'))
+            
+            for i, row in enumerate(faceoff_rows):
+                cells = row.find_all('td')
+                if len(cells) >= 4:
+                    team_type = 'visitor' if i == 0 else 'home'
+                    
+                    faceoff_data[team_type] = {
+                        'even_strength': self._parse_faceoff_string(cells[0].get_text(strip=True)),
+                        'power_play': self._parse_faceoff_string(cells[1].get_text(strip=True)),
+                        'short_handed': self._parse_faceoff_string(cells[2].get_text(strip=True)),
+                        'total': self._parse_faceoff_string(cells[3].get_text(strip=True))
+                    }
+            
+        except Exception as e:
+            self.logger.error(f"Error parsing enhanced faceoff summaries: {e}")
+        
+        return faceoff_data
+    
+    def _parse_faceoff_string(self, faceoff_str: str) -> Dict[str, Any]:
+        """Parse faceoff string like '16-46/35%' into structured data."""
+        try:
+            if not faceoff_str or faceoff_str.strip() == '':
+                return {'won': 0, 'total': 0, 'percentage': 0.0}
+            
+            # Parse format like "16-46/35%"
+            match = re.match(r'(\d+)-(\d+)/(\d+)%', faceoff_str.strip())
+            if match:
+                won = int(match.group(1))
+                total = int(match.group(2))
+                percentage = float(match.group(3))
+                
+                return {
+                    'won': won,
+                    'total': total,
+                    'percentage': percentage
+                }
+            
+            return {'won': 0, 'total': 0, 'percentage': 0.0}
+        except Exception as e:
+            self.logger.error(f"Error parsing faceoff string '{faceoff_str}': {e}")
+            return {'won': 0, 'total': 0, 'percentage': 0.0}
+    
+    def _parse_team_summaries_enhanced(self, soup: BeautifulSoup) -> Dict[str, Any]:
+        """
+        Enhanced team summaries parsing (goals, shots, etc.) with better BeautifulSoup usage.
+        
+        Args:
+            soup: BeautifulSoup object of the HTML content
+            
+        Returns:
+            Dictionary containing team summaries for both teams
+        """
+        team_summaries = {
+            'visitor': {},
+            'home': {}
+        }
+        
+        try:
+            # Find team summary section
+            team_summary_section = soup.find('td', string=re.compile(r'TEAM SUMMARY'))
+            if not team_summary_section:
+                return team_summaries
+            
+            # Find the parent table containing team summary data
+            team_summary_table = team_summary_section.find_parent('table')
+            if not team_summary_table:
+                return team_summaries
+            
+            # Parse team summary data
+            # Look for rows with team statistics
+            for row in team_summary_table.find_all('tr'):
+                cells = row.find_all('td')
+                if len(cells) >= 10:
+                    # Check if this is a team summary row
+                    first_cell_text = cells[0].get_text(strip=True)
+                    if not re.match(r'^\d+$', first_cell_text):  # Not a player row
+                        # This might be a team summary row
+                        team_summary = self._extract_team_summary_from_row(cells, 'unknown')
+                        if team_summary:
+                            # Determine team type based on context
+                            team_type = 'visitor' if len(team_summaries['visitor']) == 0 else 'home'
+                            team_summaries[team_type] = team_summary
+            
+        except Exception as e:
+            self.logger.error(f"Error parsing enhanced team summaries: {e}")
+        
+        return team_summaries
+    
+    def _validate_es_data(self, data: Dict[str, Any]) -> None:
+        """
+        Validate parsed ES data for consistency and quality.
+        
+        Args:
+            data: Parsed ES data dictionary
+        """
+        try:
+            validation_errors = []
+            
+            # Validate game header
+            if not data.get('game_header', {}).get('game_info', {}).get('game_id'):
+                validation_errors.append("Missing game ID")
+            
+            # Validate team data
+            visitor_team = data.get('game_header', {}).get('visitor_team', {})
+            home_team = data.get('game_header', {}).get('home_team', {})
+            
+            if not visitor_team.get('name'):
+                validation_errors.append("Missing visitor team name")
+            
+            if not home_team.get('name'):
+                validation_errors.append("Missing home team name")
+            
+            # Validate player statistics
+            visitor_players = data.get('player_statistics', {}).get('visitor', [])
+            home_players = data.get('player_statistics', {}).get('home', [])
+            
+            if len(visitor_players) == 0:
+                validation_errors.append("No visitor team players found")
+            
+            if len(home_players) == 0:
+                validation_errors.append("No home team players found")
+            
+            # Validate player data quality
+            for player in visitor_players + home_players:
+                if player.get('goals', 0) + player.get('assists', 0) != player.get('points', 0):
+                    validation_errors.append(f"Points mismatch for player {player.get('name', 'Unknown')}")
+            
+            # Add validation results to metadata
+            if validation_errors:
+                data['parsing_metadata']['validation_errors'] = validation_errors
+                data['parsing_metadata']['data_quality'] = 'low'
+            else:
+                data['parsing_metadata']['data_quality'] = 'high'
+            
+        except Exception as e:
+            self.logger.error(f"Error validating ES data: {e}")
+            data['parsing_metadata']['validation_errors'] = [f"Validation error: {str(e)}"]
+            data['parsing_metadata']['data_quality'] = 'unknown'
+    
+    def _parse_team_player_stats(self, soup: BeautifulSoup, team_type: str) -> List[Dict[str, Any]]:
+        """
+        Parse player statistics for a specific team from Event Summary using BeautifulSoup.
+        
+        Args:
+            soup: BeautifulSoup object of the HTML content
+            team_type: 'visitor' or 'home'
+            
+        Returns:
+            List of player statistics dictionaries
+        """
+        players = []
+        
+        try:
+            # Find the team-specific table using the ID attribute to determine team context
+            team_table_id = 'Visitor' if team_type == 'visitor' else 'Home'
+            team_table = soup.find('table', {'id': team_table_id})
+            
+            if not team_table:
+                self.logger.warning(f"Could not find table with id='{team_table_id}' for {team_type} team")
+                return players
+            
+            # Find all tables in the document that contain player data
+            # Look for tables with many columns (25+ columns indicate player stats tables)
             all_tables = soup.find_all('table')
-            player_tables = []
             
             for table in all_tables:
+                # Check if this table has the structure of a player stats table
                 rows = table.find_all('tr')
-                player_rows = 0
+                if len(rows) < 5:  # Skip small tables
+                    continue
+                    
+                # Check if any row has 25+ cells (player stats table structure)
+                has_player_rows = False
                 for row in rows:
                     cells = row.find_all('td')
-                    if len(cells) >= 15:
-                        first_cell = cells[0].get_text(strip=True)
-                        if first_cell.isdigit():
-                            player_rows += 1
+                    if len(cells) >= 25:  # Player stats tables have 25+ columns
+                        first_cell_text = cells[0].get_text(strip=True)
+                        if re.match(r'^\d+$', first_cell_text):  # First cell is a sweater number
+                            has_player_rows = True
+                            break
                 
-                if player_rows > 20:  # Only tables with significant player data
-                    player_tables.append(table)
-            
-            # Use the first table for visitor, second for home
-            target_table = None
-            if team_type == 'visitor' and len(player_tables) > 0:
-                target_table = player_tables[0]
-            elif team_type == 'home' and len(player_tables) > 1:
-                target_table = player_tables[1]
-            
-            if target_table:
-                rows = target_table.find_all('tr')
-                for row in rows:
-                    cells = row.find_all('td')
-                    if len(cells) >= 15:  # Ensure we have enough columns for player stats
-                        # Check if first cell contains a sweater number
-                        sweater_cell = cells[0]
-                        sweater_text = sweater_cell.get_text(strip=True)
-                        
-                        if sweater_text.isdigit():
-                            player_stats = self._extract_player_stats_from_row(cells, team_type)
-                            if player_stats:
-                                players.append(player_stats)
+                if has_player_rows:
+                    # This is a player stats table, process it
+                    for row in rows:
+                        cells = row.find_all('td')
+                        if len(cells) >= 25:  # Ensure we have enough columns for player stats
+                            # Check if first cell contains a sweater number (digit)
+                            first_cell_text = cells[0].get_text(strip=True)
+                            if re.match(r'^\d+$', first_cell_text):  # Regex to match only digits
+                                player_stats = self._extract_player_stats_from_row_bs4(cells, team_type)
+                                if player_stats:
+                                    # Check for duplicates based on player_id and sweater_number
+                                    is_duplicate = False
+                                    for existing_player in players:
+                                        if (existing_player.get('player_id') == player_stats.get('player_id') and 
+                                            existing_player.get('sweater_number') == player_stats.get('sweater_number')):
+                                            is_duplicate = True
+                                            break
+                                    
+                                    if not is_duplicate:
+                                        players.append(player_stats)
                                 
         except Exception as e:
             self.logger.error(f"Error parsing {team_type} team player stats: {e}")
         
         return players
+    
+    def _extract_player_stats_from_row_bs4(self, cells: List, team_type: str) -> Dict[str, Any]:
+        """
+        Extract player statistics from a table row using BeautifulSoup and regex.
+        
+        Args:
+            cells: List of BeautifulSoup td elements
+            team_type: 'visitor' or 'home'
+            
+        Returns:
+            Dictionary with player statistics
+        """
+        try:
+            # Ensure cells is a list and has enough elements
+            if not isinstance(cells, list) or len(cells) < 25:
+                return None
+                
+            # Extract basic player info using regex for validation
+            sweater_text = cells[0].get_text(strip=True)
+            if not re.match(r'^\d+$', sweater_text):
+                return None
+                
+            sweater_number = int(sweater_text)
+            position = cells[1].get_text(strip=True)
+            player_name = cells[2].get_text(strip=True)
+            
+            # Get team ID from game header data
+            team_id = None
+            if hasattr(self, '_current_game_data') and self._current_game_data:
+                if team_type == 'visitor':
+                    team_id = self._current_game_data.get('visitor_team', {}).get('id')
+                else:
+                    team_id = self._current_game_data.get('home_team', {}).get('id')
+            
+            # Use reference data to get player ID and full name
+            player_id = None
+            resolved_name = player_name
+            if team_id:
+                # Try to resolve player name using reference data
+                resolved_name = self._resolve_player_name(team_id, sweater_number, player_name)
+                
+                # Get player ID from reference data
+                boxscore_data = self.reference_data.get_boxscore_by_id(self._current_game_id) if hasattr(self, '_current_game_id') else None
+                if boxscore_data:
+                    team_key = 'awayTeam' if team_type == 'visitor' else 'homeTeam'
+                    player_stats = boxscore_data.get('playerByGameStats', {}).get(team_key, {})
+                    for player_type in ['forwards', 'defense', 'goalies']:
+                        for player in player_stats.get(player_type, []):
+                            if player.get('sweaterNumber') == sweater_number:
+                                player_id = player.get('playerId')
+                                break
+                        if player_id:
+                            break
+            
+            # Extract statistics using regex for numeric validation
+            goals = self._safe_int_regex(cells[3].get_text(strip=True))
+            assists = self._safe_int_regex(cells[4].get_text(strip=True))
+            points = self._safe_int_regex(cells[5].get_text(strip=True))
+            plus_minus = self._safe_int_regex(cells[6].get_text(strip=True))
+            penalty_number = self._safe_int_regex(cells[7].get_text(strip=True))  # PN
+            penalty_minutes = self._safe_int_regex(cells[8].get_text(strip=True))  # PIM
+            
+            # Time on Ice data
+            toi_total = cells[9].get_text(strip=True)
+            shifts = self._safe_int_regex(cells[10].get_text(strip=True))
+            avg_shift = cells[11].get_text(strip=True)
+            toi_pp = cells[12].get_text(strip=True)
+            toi_sh = cells[13].get_text(strip=True)
+            toi_ev = cells[14].get_text(strip=True)
+            
+            # Additional stats
+            shots = self._safe_int_regex(cells[15].get_text(strip=True))
+            attempts_blocked = self._safe_int_regex(cells[16].get_text(strip=True))
+            missed_shots = self._safe_int_regex(cells[17].get_text(strip=True))
+            hits = self._safe_int_regex(cells[18].get_text(strip=True))
+            giveaways = self._safe_int_regex(cells[19].get_text(strip=True))
+            takeaways = self._safe_int_regex(cells[20].get_text(strip=True))
+            blocked_shots = self._safe_int_regex(cells[21].get_text(strip=True))
+            faceoffs_won = self._safe_int_regex(cells[22].get_text(strip=True))
+            faceoffs_lost = self._safe_int_regex(cells[23].get_text(strip=True))
+            faceoff_percentage = self._safe_float_regex(cells[24].get_text(strip=True))
+            
+            return {
+                'player_id': player_id,
+                'sweater_number': sweater_number,
+                'position': position,
+                'name': resolved_name,
+                'original_name': player_name,
+                'team_id': team_id,
+                'team_type': team_type,
+                'goals': goals,
+                'assists': assists,
+                'points': points,
+                'plus_minus': plus_minus,
+                'penalty_number': penalty_number,
+                'penalty_minutes': penalty_minutes,
+                'time_on_ice': {
+                    'total': toi_total,
+                    'shifts': shifts,
+                    'avg_shift': avg_shift,
+                    'power_play': toi_pp,
+                    'short_handed': toi_sh,
+                    'even_strength': toi_ev
+                },
+                'shots': shots,
+                'attempts_blocked': attempts_blocked,
+                'missed_shots': missed_shots,
+                'hits': hits,
+                'giveaways': giveaways,
+                'takeaways': takeaways,
+                'blocked_shots': blocked_shots,
+                'faceoffs_won': faceoffs_won,
+                'faceoffs_lost': faceoffs_lost,
+                'faceoff_percentage': faceoff_percentage
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error extracting player stats from row: {e}")
+            import traceback
+            self.logger.error(f"Traceback: {traceback.format_exc()}")
+            return None
+    
+    def _safe_int_regex(self, text: str) -> int:
+        """Safely convert text to int using regex to extract numeric values."""
+        if not text or text.strip() == '' or text.strip() == '&nbsp;':
+            return 0
+        
+        # Use regex to extract numeric value (including negative numbers)
+        match = re.search(r'-?\d+', text.strip())
+        if match:
+            return int(match.group())
+        return 0
+    
+    def _safe_float_regex(self, text: str) -> float:
+        """Safely convert text to float using regex to extract numeric values."""
+        if not text or text.strip() == '' or text.strip() == '&nbsp;':
+            return 0.0
+        
+        # Use regex to extract numeric value (including decimals and negative numbers)
+        match = re.search(r'-?\d+\.?\d*', text.strip())
+        if match:
+            return float(match.group())
+        return 0.0
     
     def _extract_player_stats_from_row(self, cells: List, team_type: str) -> Dict[str, Any]:
         """
