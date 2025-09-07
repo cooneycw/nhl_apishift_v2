@@ -1,0 +1,12 @@
+Total goals parsed: 5
+Goal 1: T.THOMPSON (72) - Period 1 8:11
+Goal 2: R.MCLEOD (71) - Period 1 19:31
+Goal 3: P.COTTER (47) - Period 2 4:38
+Goal 4: P.COTTER (47) - Period 3 0:18
+Goal 5: J.HUGHES (86) - Period 3 5:32
+
+J.ZUCKER goals found: 0
+❌ J.ZUCKER's goal is missing from the parsed data!
+
+🔍 Manually checking HTML table rows...
+Found 18 table rows

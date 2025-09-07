@@ -649,8 +649,6 @@ The HTML reports contain valuable data that can be extracted for analysis. **Bea
 ```python
 from bs4 import BeautifulSoup
 import requests
-from typing import Dict, List, Any
-import re
 
 def fetch_html_report(season: str, report_type: str, game_id: str) -> BeautifulSoup:
     """
@@ -672,149 +670,42 @@ def fetch_html_report(season: str, report_type: str, game_id: str) -> BeautifulS
     soup = BeautifulSoup(response.content, 'html.parser')
     return soup
 
-def extract_game_summary_data(soup: BeautifulSoup) -> Dict[str, Any]:
+def extract_table_data(soup: BeautifulSoup, table_id: str = None, table_class: str = None) -> List[Dict[str, str]]:
     """
-    Extract data from Game Summary (GS) HTML report
+    Extract data from HTML tables
     
     Args:
         soup: BeautifulSoup object of the HTML report
+        table_id: ID of the table to extract
+        table_class: Class of the table to extract
     
     Returns:
-        Dictionary containing extracted game summary data
+        List of dictionaries containing table data
     """
-    data = {}
+    data = []
     
-    # Find game info table
-    game_info_table = soup.find('table', {'id': 'GameInfo'})
-    if game_info_table:
-        # Extract game details
-        rows = game_info_table.find_all('tr')
-        for row in rows:
-            cells = row.find_all('td')
-            if len(cells) >= 2:
-                key = cells[0].get_text(strip=True)
-                value = cells[1].get_text(strip=True)
-                data[key] = value
+    # Find table by ID or class
+    if table_id:
+        table = soup.find('table', {'id': table_id})
+    elif table_class:
+        table = soup.find('table', {'class': table_class})
+    else:
+        table = soup.find('table')
     
-    # Find team stats tables
-    team_stats_tables = soup.find_all('table', {'class': 'teamStats'})
-    for table in team_stats_tables:
-        # Extract team statistics
-        team_name = table.find_previous('h3').get_text(strip=True) if table.find_previous('h3') else 'Unknown'
-        team_data = {}
-        
+    if table:
         rows = table.find_all('tr')
+        headers = [th.get_text(strip=True) for th in rows[0].find_all(['th', 'td'])]
+        
         for row in rows[1:]:  # Skip header row
             cells = row.find_all('td')
-            if len(cells) >= 2:
-                stat_name = cells[0].get_text(strip=True)
-                stat_value = cells[1].get_text(strip=True)
-                team_data[stat_name] = stat_value
-        
-        data[f'{team_name}_stats'] = team_data
+            if len(cells) >= len(headers):
+                row_data = {}
+                for i, cell in enumerate(cells):
+                    if i < len(headers):
+                        row_data[headers[i]] = cell.get_text(strip=True)
+                data.append(row_data)
     
     return data
-
-def extract_event_summary_data(soup: BeautifulSoup) -> List[Dict[str, Any]]:
-    """
-    Extract data from Event Summary (ES) HTML report
-    
-    Args:
-        soup: BeautifulSoup object of the HTML report
-    
-    Returns:
-        List of dictionaries containing event data
-    """
-    events = []
-    
-    # Find event table
-    event_table = soup.find('table', {'id': 'EventTable'})
-    if event_table:
-        rows = event_table.find_all('tr')
-        for row in rows[1:]:  # Skip header row
-            cells = row.find_all('td')
-            if len(cells) >= 6:
-                event = {
-                    'period': cells[0].get_text(strip=True),
-                    'time': cells[1].get_text(strip=True),
-                    'event_type': cells[2].get_text(strip=True),
-                    'description': cells[3].get_text(strip=True),
-                    'team': cells[4].get_text(strip=True),
-                    'player': cells[5].get_text(strip=True)
-                }
-                events.append(event)
-    
-    return events
-
-def extract_faceoff_data(soup: BeautifulSoup) -> Dict[str, List[Dict[str, Any]]]:
-    """
-    Extract data from Faceoff Summary (FS) HTML report
-    
-    Args:
-        soup: BeautifulSoup object of the HTML report
-    
-    Returns:
-        Dictionary containing faceoff data by team
-    """
-    faceoff_data = {}
-    
-    # Find faceoff tables for each team
-    faceoff_tables = soup.find_all('table', {'class': 'faceoffTable'})
-    for table in faceoff_tables:
-        team_name = table.find_previous('h3').get_text(strip=True) if table.find_previous('h3') else 'Unknown'
-        team_faceoffs = []
-        
-        rows = table.find_all('tr')
-        for row in rows[1:]:  # Skip header row
-            cells = row.find_all('td')
-            if len(cells) >= 4:
-                faceoff = {
-                    'player': cells[0].get_text(strip=True),
-                    'wins': int(cells[1].get_text(strip=True) or 0),
-                    'losses': int(cells[2].get_text(strip=True) or 0),
-                    'percentage': float(cells[3].get_text(strip=True).replace('%', '') or 0)
-                }
-                team_faceoffs.append(faceoff)
-        
-        faceoff_data[team_name] = team_faceoffs
-    
-    return faceoff_data
-
-def extract_time_on_ice_data(soup: BeautifulSoup) -> Dict[str, List[Dict[str, Any]]]:
-    """
-    Extract data from Time on Ice (TV/TH) HTML report
-    
-    Args:
-        soup: BeautifulSoup object of the HTML report
-    
-    Returns:
-        Dictionary containing TOI data by team
-    """
-    toi_data = {}
-    
-    # Find TOI tables for each team
-    toi_tables = soup.find_all('table', {'class': 'toiTable'})
-    for table in toi_tables:
-        team_name = table.find_previous('h3').get_text(strip=True) if table.find_previous('h3') else 'Unknown'
-        team_toi = []
-        
-        rows = table.find_all('tr')
-        for row in rows[1:]:  # Skip header row
-            cells = row.find_all('td')
-            if len(cells) >= 6:
-                toi = {
-                    'player': cells[0].get_text(strip=True),
-                    'position': cells[1].get_text(strip=True),
-                    'total_toi': cells[2].get_text(strip=True),
-                    'even_toi': cells[3].get_text(strip=True),
-                    'pp_toi': cells[4].get_text(strip=True),
-                    'sh_toi': cells[5].get_text(strip=True)
-                }
-                team_toi.append(toi)
-        
-        toi_data[team_name] = team_toi
-    
-    return toi_data
 ```
 
 #### HTML Report Data Types
@@ -836,8 +727,6 @@ The HTML reports contain valuable data that can be extracted for analysis:
 - **Error Handling**: Robust parsing even with minor HTML inconsistencies
 - **Data Extraction**: Easy extraction of specific data elements using CSS selectors and find methods
 - **Text Processing**: Built-in text cleaning and normalization
-- **Cross-Platform**: Works consistently across different operating systems
-- **Performance**: Efficient parsing of large HTML files
 
 #### Integration with Right-Rail Data
 
@@ -878,85 +767,56 @@ The repository follows this specific order for data collection:
 
 **Filtering Note**: Game type filtering is applied at step 3, ensuring all subsequent steps only process regular season games.
 
-### 2. Collection Success Rates (Based on Testing)
-Based on comprehensive testing of the 2024-2025 season (1,312 regular season games):
+### 2. Collection Success Rates
+Success rates are calculated dynamically during collection and vary based on:
+- API availability and rate limiting
+- Network conditions  
+- Game data availability
+- System performance
 
-- **Boxscores**: 93.2% success rate (1,223/1,312 games)
-- **Play-by-Play**: 95.0% success rate (1,247/1,312 games)
-- **HTML Reports**: 100% success rate for available report types (GS, ES, PL, FS, FC, RO, SS)
-- **Shift Charts**: 100% success rate for Time on Ice data
-- **Overall Average**: 94.1% success rate
+Real-time success rates are displayed during collection and logged for analysis. Failed collections are typically due to temporary API issues, rate limiting, or network timeouts. Failed games are usually accessible on retry.
 
-**Failed Collections**: Typically due to temporary API issues, rate limiting, or network timeouts. Failed games are usually accessible on retry.
-
-**Rate Limiting**: System implements conservative rate limiting (1 second between requests, max 2 concurrent) to ensure API stability.
+**Rate Limiting**: System implements conservative rate limiting (500ms between requests) to ensure API stability.
 
 ### 3. Data Storage Structure
-The repository uses CSV files for data storage with the following structure, providing human-readable, version-controlled, and easily accessible data:
+The repository uses JSON files for primary data storage with the following structure:
 
 ```
 storage/
-├── csv/
-│   ├── seasons/
-│   │   ├── seasons.csv
-│   │   └── season_metadata.csv
-│   ├── teams/
-│   │   ├── teams.csv
-│   │   ├── team_standings.csv
-│   │   └── team_rosters.csv
-│   ├── games/
-│   │   ├── game_schedule.csv
-│   │   ├── game_results.csv
-│   │   └── game_metadata.csv
-│   ├── players/
-│   │   ├── player_info.csv
-│   │   ├── player_stats.csv
-│   │   ├── player_game_stats.csv
-│   │   └── player_names.csv
-│   ├── events/
-│   │   ├── play_by_play.csv
-│   │   ├── shifts.csv
-│   │   └── events.csv
-│   ├── statistics/
-│   │   ├── team_stats.csv
-│   │   ├── player_stats.csv
-│   │   └── game_stats.csv
-│   └── curated/
-│       ├── game_curated.csv
-│       ├── player_curated.csv
-│       └── team_curated.csv
 ├── {season}/                  # Season-specific data (e.g., 20242025)
-│   ├── json/                  # Raw JSON data from APIs (2,627 files)
-│   │   ├── boxscores/         # Game boxscore data (1,312 files)
-│   │   ├── playbyplay/        # Play-by-play data (1,312 files)
+│   ├── json/                  # Raw JSON data from APIs
+│   │   ├── boxscores/         # Game boxscore data
+│   │   ├── gamecenter_landing/ # Game overview and summary data
+│   │   ├── playbyplay/        # Play-by-play data (authoritative for goal data)
+│   │   ├── shiftcharts/       # Shift charts data
 │   │   ├── games.json         # Season schedule data
 │   │   ├── players.json       # Season player information
 │   │   └── teams.json         # Season team data (season-specific)
-│   ├── html/reports/          # HTML reports (HTM files) (13,120 files)
-│   │   ├── GS/                # Game Summary reports (1,312 files)
-│   │   ├── ES/                # Event Summary reports (1,312 files)
-│   │   ├── PL/                # Play-by-Play reports (1,312 files)
-│   │   ├── FS/                # Faceoff Summary reports (1,312 files)
-│   │   ├── FC/                # Faceoff Comparison reports (1,312 files)
-│   │   ├── RO/                # Roster reports (1,312 files)
-│   │   ├── SS/                # Shot Summary reports (1,312 files)
-│   │   ├── SC/                # Shift Chart reports (1,312 files)
-│   │   ├── TV/                # Time on Ice Away reports (1,312 files)
-│   │   └── TH/                # Time on Ice Home reports (1,312 files)
-│   └── csv/curate/            # Curated data extraction targets (empty - ready for processing)
-│       ├── game_summaries/    # Target for GS report extraction
-│       ├── event_summaries/   # Target for ES report extraction
-│       ├── play_by_play/      # Target for PL report extraction
-│       ├── faceoff_summary/   # Target for FS report extraction
-│       ├── faceoff_comparison/ # Target for FC report extraction
-│       ├── rosters/           # Target for RO report extraction
-│       ├── shot_summary/      # Target for SS report extraction
-│       ├── time_on_ice_away/  # Target for TV report extraction
-│       └── time_on_ice_home/  # Target for TH report extraction
+│   ├── html/reports/          # HTML reports (HTM files)
+│   │   ├── GS/                # Game Summary reports
+│   │   ├── ES/                # Event Summary reports
+│   │   ├── PL/                # Play-by-Play reports
+│   │   ├── FS/                # Faceoff Summary reports
+│   │   ├── FC/                # Faceoff Comparison reports
+│   │   ├── RO/                # Roster reports
+│   │   ├── SS/                # Shot Summary reports
+│   │   ├── TV/                # Time on Ice Away reports
+│   │   └── TH/                # Time on Ice Home reports
+│   ├── json/curate/           # Curated HTML report JSON files
+│   │   ├── gs/                # Game Summary JSON files
+│   │   ├── es/                # Event Summary JSON files
+│   │   ├── pl/                # Play-by-Play JSON files
+│   │   ├── ro/                # Roster JSON files
+│   │   ├── fs/                # Faceoff Summary JSON files
+│   │   ├── th/                # Time on Ice Home JSON files
+│   │   ├── tv/                # Time on Ice Away JSON files
+│   │   └── reconciliation/    # Goal reconciliation reports
+│   └── csv/curate/            # Legacy curated data files
+│       └── html_data_{gameId}.json # Full parsed game data
 ├── global/                    # Cross-season data
 │   ├── seasons.json           # Historical seasons list
 │   └── logs/                  # Application logs
-└── shift_charts/
+└── processed/                 # Cross-season processed data
 ```
 
 ### 4. Core Data Classes
@@ -1073,197 +933,16 @@ class NHLEvent:
     details: Optional[Dict[str, Any]] = None
 ```
 
-#### CSV Data Structures and Schema
+#### Data Storage Benefits
 
-The following CSV files provide structured, human-readable data storage for all NHL API datasets:
-
-##### Seasons Data
-**File**: `storage/csv/seasons/seasons.csv`
-```csv
-season_id,season_name,season_type,start_date,end_date,is_active
-20232024,2023-24,regular,2023-10-10,2024-04-18,false
-20242025,2024-25,regular,2024-10-08,2025-04-19,true
-```
-
-**File**: `storage/csv/seasons/season_metadata.csv`
-```csv
-season_id,total_games,playoff_games,teams_count,players_count,data_completeness
-20232024,1312,89,32,800,0.98
-20242025,1312,0,32,750,0.85
-```
-
-##### Teams Data
-**File**: `storage/csv/teams/teams.csv`
-```csv
-team_id,franchise_id,full_name,league_id,raw_tricode,tri_code,conference,division,venue,city,timezone
-6,1,Boston Bruins,133,BOS,BOS,Eastern,Atlantic,TD Garden,Boston,America/New_York
-16,11,Chicago Blackhawks,133,CHI,CHI,Western,Central,United Center,Chicago,America/Chicago
-```
-
-**File**: `storage/csv/teams/team_standings.csv`
-```csv
-team_id,season_id,games_played,wins,losses,ot_losses,points,point_pct,goals_for,goals_against,goal_diff,power_play_pct,penalty_kill_pct,faceoff_win_pct,shots_for_per_game,shots_against_per_game,last_updated
-6,20242025,82,47,20,15,109,0.665,263,218,45,24.9,79.3,52.4,28.1,31.2,2024-04-19
-16,20242025,82,25,46,11,61,0.372,224,292,-68,21.2,81.9,44.8,24.5,31.1,2024-04-19
-```
-
-**File**: `storage/csv/teams/team_rosters.csv`
-```csv
-team_id,season_id,player_id,player_name,position_code,sweater_number,shoots_catches,height_inches,weight_pounds,birth_date,birth_city,birth_country,roster_status,last_updated
-6,20242025,8478402,Patrick Kane,R,88,L,71,177,1988-11-19,Buffalo,USA,active,2024-04-19
-16,20242025,8481624,Connor Bedard,C,98,R,72,185,2005-07-17,North Vancouver,CAN,active,2024-04-19
-```
-
-##### Games Data
-**File**: `storage/csv/games/game_schedule.csv`
-```csv
-game_id,season_id,game_date,home_team_id,away_team_id,home_team_abbrev,away_team_abbrev,game_type,game_state,venue,attendance,last_updated
-2023020001,20232024,2023-10-10,6,16,BOS,CHI,2,OFF,TD Garden,17850,2023-10-10
-2024020001,20242025,2024-10-08,6,16,BOS,CHI,2,OFF,TD Garden,17850,2024-10-08
-```
-
-**File**: `storage/csv/games/game_results.csv`
-```csv
-game_id,home_goals,away_goals,home_sog,away_sog,home_pp_goals,away_pp_goals,home_pp_attempts,away_pp_attempts,home_pim,away_pim,home_hits,away_hits,home_blocks,away_blocks,home_faceoffs_won,away_faceoffs_won,home_faceoffs_total,away_faceoffs_total,last_updated
-2023020001,3,1,28,25,1,0,3,2,4,6,22,18,15,12,11,9,21,19,2023-10-10
-```
-
-**File**: `storage/csv/games/game_metadata.csv`
-```csv
-game_id,playbyplay_url,game_summary_url,event_summary_url,faceoff_summary_url,roster_url,shot_summary_url,time_on_ice_url,shift_chart_url,last_updated
-2023020001,https://www.nhl.com/gamecenter/2023020001,https://www.nhl.com/scores/htmlreports/20232024/GS020001.HTM,https://www.nhl.com/scores/htmlreports/20232024/ES020001.HTM,https://www.nhl.com/scores/htmlreports/20232024/FS020001.HTM,https://www.nhl.com/scores/htmlreports/20232024/RO020001.HTM,https://www.nhl.com/scores/htmlreports/20232024/SS020001.HTM,https://www.nhl.com/scores/htmlreports/20232024/TV020001.HTM,https://www.nhl.com/stats/shiftcharts?id=2023020001,2023-10-10
-```
-
-##### Players Data
-**File**: `storage/csv/players/player_info.csv`
-```csv
-player_id,first_name,last_name,full_name,position_code,shoots_catches,height_inches,weight_pounds,birth_date,birth_city,birth_country,current_team_id,current_team_abbrev,rookie_year,last_updated
-8478402,Patrick,Kane,Patrick Kane,R,L,71,177,1988-11-19,Buffalo,USA,6,BOS,2007,2024-04-19
-8481624,Connor,Bedard,Connor Bedard,C,R,72,185,2005-07-17,North Vancouver,CAN,16,CHI,2023,2024-04-19
-```
-
-**File**: `storage/csv/players/player_stats.csv`
-```csv
-player_id,season_id,team_id,team_abbrev,games_played,goals,assists,points,plus_minus,penalty_minutes,shots,shooting_pct,time_on_ice_per_game,ev_goals,ev_assists,ev_points,pp_goals,pp_assists,pp_points,sh_goals,sh_assists,sh_points,game_winning_goals,ot_goals,faceoff_win_pct,last_updated
-8478402,20242025,6,BOS,79,31,43,74,29,20,207,14.98,1114.99,29,35,64,2,8,10,0,0,0,2,1,31.71,2024-04-19
-8481624,20242025,16,CHI,68,22,39,61,-44,26,207,10.63,1198.45,18,28,46,4,11,15,0,0,0,1,0,45.23,2024-04-19
-```
-
-**File**: `storage/csv/players/player_game_stats.csv`
-```csv
-game_id,player_id,team_id,goals,assists,points,plus_minus,penalty_minutes,hits,power_play_goals,shots,faceoff_pct,time_on_ice,even_strength_shots,power_play_shots,shorthanded_shots,saves,goals_against,even_strength_goals_against,power_play_goals_against,shorthanded_goals_against,starter,last_updated
-2023020001,8478402,6,0,0,0,-1,0,2,0,3,0.0,923,3,0,0,0,0,0,0,0,false,2023-10-10
-```
-
-##### Events Data
-**File**: `storage/csv/events/play_by_play.csv`
-```csv
-game_id,event_id,period,period_type,time_in_period,time_remaining,type_code,type_desc_key,situation_code,home_team_defending_side,details_json,last_updated
-2023020001,1,1,REG,00:00,20:00,502,faceoff,1551,left,"{""winningPlayerId"":8478402,""losingPlayerId"":8478403,""zoneCode"":""N""}",2023-10-10
-2023020001,2,1,REG,00:15,19:45,503,hit,1551,left,"{""playerId"":8478404,""xCoord"":25,""yCoord"":-15}",2023-10-10
-2023020001,3,1,REG,01:23,18:37,505,goal,1551,left,"{""playerId"":8478402,""shotType"":""wrist"",""goalModifier"":""none""}",2023-10-10
-```
-
-**File**: `storage/csv/events/shifts.csv`
-```csv
-game_id,event_id,period,player_count,elapsed_time,game_time,event_type,description,away_players_json,home_players_json,last_updated
-2023020001,1,1,10,00:00,20:00,START,"Period 1 Start","[{""sweater"":88,""position"":""R""}]","[{""sweater"":98,""position"":""C""}]",2023-10-10
-```
-
-##### Statistics Data
-**File**: `storage/csv/statistics/team_stats.csv`
-```csv
-team_id,season_id,stat_type,stat_value,stat_period,last_updated
-6,20242025,wins,47,season,2024-04-19
-6,20242025,goals_for,263,season,2024-04-19
-6,20242025,power_play_pct,24.9,season,2024-04-19
-```
-
-**File**: `storage/csv/statistics/player_stats.csv`
-```csv
-player_id,season_id,stat_type,stat_value,stat_period,last_updated
-8478402,20242025,goals,31,season,2024-04-19
-8478402,20242025,assists,43,season,2024-04-19
-8478402,20242025,time_on_ice_per_game,1114.99,season,2024-04-19
-```
-
-##### Curated Data
-**File**: `storage/csv/curated/game_curated.csv`
-```csv
-game_id,season_id,home_team_id,away_team_id,game_date,home_goals,away_goals,home_sog,away_sog,home_pp_goals,away_pp_goals,home_pp_attempts,away_pp_attempts,home_pim,away_pim,home_hits,away_hits,home_blocks,away_blocks,home_faceoffs_won,away_faceoffs_won,home_faceoffs_total,away_faceoffs_total,curation_timestamp
-2023020001,20232024,6,16,2023-10-10,3,1,28,25,1,0,3,2,4,6,22,18,15,12,11,9,21,19,2023-10-10T23:59:59
-```
-
-#### CSV Data Management Benefits
-
-- **Human Readable**: Easy to inspect, debug, and understand data
-- **Version Control Friendly**: Can be tracked in Git with diff capabilities
+The JSON-based storage system provides:
+- **Data Integrity**: Raw API responses preserved for accuracy
+- **Structured Access**: Organized by season and data type
+- **Version Control Friendly**: JSON files can be tracked in Git
 - **Universal Compatibility**: Works with any programming language or tool
-- **Easy Import/Export**: Simple to load into databases, spreadsheets, or analysis tools
-- **Incremental Updates**: Can append new data without full file replacement
-- **Data Validation**: Easy to implement schema validation and data quality checks
-- **Backup and Recovery**: Simple file-based backup and restore procedures
+- **Easy Processing**: Simple to parse and transform for analysis
+- **Incremental Updates**: Can add new data without full file replacement
 
-#### Legacy Data Classes (Original NHLapiV3 Structure)
-
-#### Game Class
-```python
-class Game:
-    - game_id: int
-    - game_date: datetime
-    - home_team: str
-    - away_team: str
-    - season_id: int
-    - playbyplay: str (URL)
-    - home_goals: int
-    - away_goals: int
-    - home_sog: int
-    - away_sog: int
-    - home_players: set
-    - away_players: set
-```
-
-#### Player Class
-```python
-class Player:
-    - player_id: int
-    - sweater_number: int
-    - last_name: str
-    - first_name: str
-    - seasons: set
-    - teams: set
-    - games: set
-    - player_games: dict
-```
-
-#### PlayerGameStats Class
-```python
-class PlayerGameStats:
-    - player_id: int
-    - game_id: int
-    - game_date: datetime
-    - team: str
-    - sweater_number: int
-    - goals: int
-    - assists: int
-    - points: int
-    - plus_minus: int
-    - pim: int
-    - hits: int
-    - ppg: int
-    - shots: int
-    - faceoff_pctg: float
-    - toi: str
-    - es_shots: int
-    - pp_shots: int
-    - sh_shots: int
-    - saves: int
-    - goals_against: int
-    - es_goals_against: int
-    - pp_goals_against: int
-    - sh_goals_against: int
-    - starter: bool
-```
 
 ## Situation Codes and Event Types
 
@@ -1273,104 +952,32 @@ Situation codes are 4-digit string identifiers that represent the current game s
 
 #### Format: `away goalie (1=in net, 0=pulled)-away skaters-home skaters-home goalie (1=in net, 0=pulled)`
 
-```python
-@dataclass
-class NHLSituationCode:
-    """NHL situation code structure"""
-    situation_code: str  # 4-digit code
-    away_goalie_in_net: bool
-    away_skaters: int
-    home_skaters: int
-    home_goalie_in_net: bool
-    description: str
-    category: str
-    strength_situation: str  # "even", "power_play", "penalty_kill", "empty_net"
-```
+Based on actual NHL API data analysis, the following situation codes are commonly found:
 
-#### Even Strength Situations (5v5)
 - **1551**: Even Strength 5v5 (Both goalies in net, 5 skaters each)
   - Format: 1-5-5-1
   - Description: "Even Strength 5v5"
   - Strength Situation: "even"
-
-#### Power Play Situations
-- **1541**: Away Power Play 5v4 (Away team has power play advantage)
-  - Format: 1-5-4-1
-  - Description: "Away Power Play 5v4"
-  - Strength Situation: "power_play" (away team)
 
 - **1451**: Home Power Play 4v5 (Home team has power play advantage)
   - Format: 1-4-5-1
   - Description: "Home Power Play 4v5"
   - Strength Situation: "power_play" (home team)
 
-- **1560**: Away PP, Home Goalie Pulled
-  - Format: 1-5-6-0
-  - Description: "Away Power Play, Home Goalie Pulled"
-  - Strength Situation: "power_play" (away team)
+- **1351**: Away Penalty Kill 3v5 (Away team shorthanded)
+  - Format: 1-3-5-1
+  - Description: "Away Penalty Kill 3v5"
+  - Strength Situation: "penalty_kill" (away team)
 
-- **1460**: Home PP, Away Goalie Pulled
-  - Format: 1-4-6-0
-  - Description: "Home Power Play, Away Goalie Pulled"
-  - Strength Situation: "power_play" (home team)
-
-- **0651**: Away PP, Away Goalie Pulled
-  - Format: 0-6-5-1
-  - Description: "Away Power Play, Away Goalie Pulled"
-  - Strength Situation: "power_play" (away team)
-
-- **1550**: Home PP, Home Goalie Pulled
-  - Format: 1-5-5-0
-  - Description: "Home Power Play, Home Goalie Pulled"
-  - Strength Situation: "power_play" (home team)
-
-#### 4v4 Situations (Both Teams Penalized)
-- **1441**: 4v4 Situation (Both teams have penalties)
-  - Format: 1-4-4-1
+- **1651**: 4v4 Situation (Both teams have penalties)
+  - Format: 1-6-5-1
   - Description: "4v4 Situation"
   - Strength Situation: "even"
 
-- **1341**: 4v4, Away Goalie Pulled
-  - Format: 1-3-4-1
-  - Description: "4v4, Away Goalie Pulled"
+- **1751**: 3v3 Situation (Overtime or special circumstances)
+  - Format: 1-7-5-1
+  - Description: "3v3 Situation"
   - Strength Situation: "even"
-
-- **1431**: 4v4, Home Goalie Pulled
-  - Format: 1-4-3-1
-  - Description: "4v4, Home Goalie Pulled"
-  - Strength Situation: "even"
-
-- **1331**: 4v4, Both Goalies Pulled
-  - Format: 1-3-3-1
-  - Description: "4v4, Both Goalies Pulled"
-  - Strength Situation: "even"
-
-#### Empty Net Situations (Goalie Pulled)
-- **0551**: Away Goalie Pulled 6v5
-  - Format: 0-5-5-1
-  - Description: "Away Goalie Pulled 6v5"
-  - Strength Situation: "even"
-
-- **1560**: Home Goalie Pulled 5v6
-  - Format: 1-5-6-0
-  - Description: "Home Goalie Pulled 5v6"
-  - Strength Situation: "even"
-
-- **0101**: Both Goalies Pulled 6v6
-  - Format: 0-1-0-1
-  - Description: "Both Goalies Pulled 6v6"
-  - Strength Situation: "even"
-
-#### Special Situations
-- **1351**: 3v5 Penalty Kill
-  - Format: 1-3-5-1
-  - Description: "3v5 Penalty Kill"
-  - Strength Situation: "penalty_kill" (away team)
-
-- **1531**: 5v3 Power Play
-  - Format: 1-5-3-1
-  - Description: "5v3 Power Play"
-  - Strength Situation: "power_play" (away team)
 
 ### Play-by-Play Event Codes
 

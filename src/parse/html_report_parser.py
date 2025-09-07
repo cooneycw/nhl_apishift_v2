@@ -407,6 +407,10 @@ class HTMLReportParser:
             # Parse game header (teams, score, date, venue)
             data['game_header'] = self._parse_game_header(soup, file_path)
             
+            # Store game data and ID for reference data lookup
+            self._current_game_data = data['game_header']
+            self._current_game_id = data['game_header'].get('game_info', {}).get('game_id')
+            
             # Parse scoring summary with proper goal structure
             data['scoring_summary'] = self._parse_scoring_summary(soup)
             
@@ -470,13 +474,14 @@ class HTMLReportParser:
         
         return None
 
-    def _lookup_player_id_by_sweater(self, sweater_number: int, player_name: str = "") -> Optional[int]:
+    def _lookup_player_id_by_sweater(self, sweater_number: int, player_name: str = "", team_id: int = None) -> Optional[int]:
         """
-        Look up player ID using sweater number and player name from reference data.
+        Look up player ID using sweater number from the current game's authoritative boxscore data.
         
         Args:
             sweater_number: Player sweater number
-            player_name: Player name for additional matching
+            player_name: Player name for additional matching (optional)
+            team_id: Team ID for team-specific lookup (optional)
             
         Returns:
             Player ID if found, None otherwise
@@ -485,28 +490,27 @@ class HTMLReportParser:
             if not hasattr(self, 'reference_data') or not self.reference_data:
                 return None
             
-            # Load players data if not already loaded
-            if not hasattr(self, '_players_cache'):
-                self._players_cache = {}
-                players_file = Path(self.storage_path) / "players.json"
-                if players_file.exists():
-                    with open(players_file, 'r', encoding='utf-8') as f:
-                        players_data = json.load(f)
-                        for player in players_data:
-                            player_id = player.get('id')
-                            sweater_num = player.get('sweaterNumber')
-                            if player_id and sweater_num:
-                                self._players_cache[sweater_num] = player_id
+            # Get the current game's boxscore data for authoritative player information
+            game_id_int = int(self._current_game_id) if hasattr(self, '_current_game_id') and self._current_game_id else None
+            if not game_id_int:
+                return None
+                
+            boxscore_data = self.reference_data.get_boxscore_by_id(game_id_int)
+            if not boxscore_data:
+                return None
             
-            # Look up by sweater number
-            if sweater_number in self._players_cache:
-                return self._players_cache[sweater_number]
-            
-            # If not found by sweater number, try to match by name
-            if player_name:
-                # This would require additional name matching logic
-                # For now, return None if sweater number lookup fails
-                pass
+            # Search through both teams' player stats
+            for team_key in ['awayTeam', 'homeTeam']:
+                team_data = boxscore_data.get('playerByGameStats', {}).get(team_key, {})
+                
+                # Check all player types (forwards, defense, goalies)
+                for player_type in ['forwards', 'defense', 'goalies']:
+                    players = team_data.get(player_type, [])
+                    for player in players:
+                        if player.get('sweaterNumber') == sweater_number:
+                            player_id = player.get('playerId')
+                            if player_id:
+                                return player_id
             
             return None
             
@@ -4342,10 +4346,16 @@ class HTMLReportParser:
             "PS"
         ]
         
-        # Check if any exception code is present
+        # Check if any exception code is present (use word boundaries to avoid false positives)
         for exception in exception_codes:
-            if exception.lower() in combined_text.lower():
-                return False
+            # Use word boundaries to avoid matching "PS" in "THOMPSON" or similar
+            if exception.lower() == "ps":
+                # Special case for "PS" - only match if it's standalone or at word boundary
+                if re.search(r'\bPS\b', combined_text, re.IGNORECASE):
+                    return False
+            else:
+                if exception.lower() in combined_text.lower():
+                    return False
         
         # Legitimate goals (these should be counted)
         legitimate_indicators = [
@@ -4360,7 +4370,7 @@ class HTMLReportParser:
                 return True
         
         # If it's empty or contains player-like patterns, assume it's legitimate
-        if not combined_text or re.match(r'^[\d\s,\.A-Z]+$', combined_text):
+        if not combined_text or re.match(r'^[\d\s,\.A-Z()]+$', combined_text):
             return True
         
         # Default to legitimate (conservative approach)
@@ -4385,7 +4395,7 @@ class HTMLReportParser:
                 # Parse name into first initial and last name
                 name_parts = self._parse_name_parts(name)
                 
-                # Look up playerId using sweater number
+                # Look up playerId using sweater number from authoritative boxscore data
                 player_id = None
                 if sweater_number and hasattr(self, 'reference_data') and self.reference_data:
                     player_id = self._lookup_player_id_by_sweater(sweater_number, name)

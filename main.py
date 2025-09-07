@@ -630,12 +630,12 @@ class NHLDataRetrievalSystem:
                             # Update progress tracking
                             games_processed_count += 1
                             
-                            # Report progress every 50 games or at completion
-                            if games_processed_count - last_progress_report >= 50 or games_processed_count == total_games:
-                                completion_percentage = (games_processed_count / total_games) * 100 if total_games > 0 else 0
+                            # Report progress every 5% or at completion
+                            completion_percentage = (games_processed_count / total_games) * 100 if total_games > 0 else 0
+                            if completion_percentage - last_progress_report >= 5.0 or games_processed_count == total_games:
                                 self.logger.info(f"📊 Progress: {games_processed_count}/{total_games} games processed "
                                                f"({completion_percentage:.1f}% complete)")
-                                last_progress_report = games_processed_count
+                                last_progress_report = completion_percentage
                                 
                         except Exception as e:
                             error_msg = f"Error processing game {game_id}: {e}"

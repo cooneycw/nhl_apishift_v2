@@ -57,7 +57,7 @@ class ReferenceDataLoader:
             self._load_teams()
             self._load_games()
             self._load_boxscores()
-            logger.info(f"Loaded reference data: {len(self.teams)} teams, {len(self.players)} players, {len(self.games)} games")
+            # Reference data loaded silently - no need for verbose logging
         except Exception as e:
             logger.error(f"Error loading reference data: {e}")
             raise
