@@ -332,7 +332,9 @@ class HTMLReportParser:
             if report_type == 'GS':
                 return self.parse_game_summary_data(soup, str(html_file))
             elif report_type == 'PL':
-                return self.parse_playbyplay_data(soup)
+                # Extract game ID from file path (e.g., PL020001.HTM -> 2024020001)
+                game_id = self._extract_game_id_from_pl_file(html_file)
+                return self.parse_playbyplay_data(soup, game_id)
             elif report_type == 'ES':
                 return self.parse_event_summary_data(soup, str(html_file))
             elif report_type == 'RO':
@@ -1750,7 +1752,7 @@ class HTMLReportParser:
         
         return shots
     
-    def parse_playbyplay_data(self, soup: BeautifulSoup) -> Dict[str, Any]:
+    def parse_playbyplay_data(self, soup: BeautifulSoup, game_id: str = None) -> Dict[str, Any]:
         """Parse complete Play-by-Play (PL) data using BeautifulSoup."""
         data = {
             'report_type': 'PL',
@@ -1759,19 +1761,52 @@ class HTMLReportParser:
             'penalties': [],
             'goals': [],
             'faceoffs': [],
-            'shots': []
+            'shots': [],
+            'hits': [],
+            'blocks': [],
+            'misses': [],
+            'saves': [],
+            'takeaways': [],
+            'giveaways': []
         }
         
         try:
-            # Extract events by period
-            period_elements = soup.find_all(['h1', 'h2', 'h3', 'div'], class_=re.compile(r'period|page'))
+            # Extract all events from PL HTML with player ID mapping
+            all_events = self._extract_pl_all_events_from_soup(soup, game_id)
+            data['events'] = all_events
             
-            for period_element in period_elements:
-                period_text = period_element.get_text().lower()
-                period_num = self.determine_period_number(period_text)
+            # Categorize events by type
+            for event in all_events:
+                event_type = event.get('event_type', '').upper()
                 
-                if period_num:
-                    data['periods'][f'period_{period_num}'] = self.extract_period_events(period_element)
+                if event_type == 'GOAL':
+                    data['goals'].append(event)
+                elif event_type == 'PENL':
+                    data['penalties'].append(event)
+                elif event_type == 'FAC':
+                    data['faceoffs'].append(event)
+                elif event_type == 'SHOT':
+                    data['shots'].append(event)
+                elif event_type == 'HIT':
+                    data['hits'].append(event)
+                elif event_type == 'BLOCK':
+                    data['blocks'].append(event)
+                elif event_type == 'MISS':
+                    data['misses'].append(event)
+                elif event_type == 'SAVE':
+                    data['saves'].append(event)
+                elif event_type == 'TAKE':
+                    data['takeaways'].append(event)
+                elif event_type == 'GIVE':
+                    data['giveaways'].append(event)
+            
+            # Group events by period
+            for event in all_events:
+                period = event.get('period', 1)
+                period_key = f'period_{period}'
+                if period_key not in data['periods']:
+                    data['periods'][period_key] = []
+                data['periods'][period_key].append(event)
                     
         except Exception as e:
             self.logger.error(f"Error parsing play-by-play data: {e}")
@@ -4958,3 +4993,624 @@ class HTMLReportParser:
             self.logger.error(f"Error parsing roster game header: {e}")
         
         return header
+    
+    def _extract_pl_all_events_from_soup(self, soup: BeautifulSoup, game_id: str = None) -> List[Dict[str, Any]]:
+        """Extract all events from Play-by-Play (PL) HTML."""
+        events = []
+        
+        try:
+            # Load player mappings if game_id is provided
+            player_mappings = {}
+            if game_id:
+                player_mappings = self._load_player_mappings(game_id)
+            
+            # Find all event rows (tr elements with id starting with "PL-")
+            event_rows = soup.find_all('tr', id=re.compile(r'^PL-\d+'))
+            
+            for row in event_rows:
+                cells = row.find_all('td')
+                if len(cells) >= 6:  # Ensure we have enough cells for event data
+                    # Extract basic event information
+                    event_number = cells[0].get_text(strip=True)
+                    period = cells[1].get_text(strip=True)
+                    period_type = cells[2].get_text(strip=True)
+                    time_text = cells[3].get_text(strip=True)
+                    event_type = cells[4].get_text(strip=True)
+                    description = cells[5].get_text(strip=True)
+                    
+                    # Create base event structure
+                    event = {
+                        'event_number': int(event_number) if event_number.isdigit() else 0,
+                        'period': int(period) if period.isdigit() else 1,
+                        'period_type': period_type,
+                        'time': time_text,
+                        'event_type': event_type,
+                        'description': description,
+                        'source': 'html_pl'
+                    }
+                    
+                    # Extract line data for this event
+                    line_data = self._extract_pl_line_data(row, player_mappings)
+                    if line_data:
+                        event.update(line_data)
+                    
+                    # Parse event-specific data based on type
+                    if event_type == 'GOAL':
+                        goal_info = self._parse_pl_goal_description(description)
+                        if goal_info:
+                            event.update(goal_info)
+                            event['is_shootout'] = period == '5' or period_type == 'SO'
+                            event['counts_for_stats'] = not event['is_shootout']
+                    elif event_type == 'PENL':
+                        penalty_info = self._parse_pl_penalty_description(description)
+                        if penalty_info:
+                            event.update(penalty_info)
+                    elif event_type == 'HIT':
+                        hit_info = self._parse_pl_hit_description(description)
+                        if hit_info:
+                            event.update(hit_info)
+                    elif event_type == 'SHOT':
+                        shot_info = self._parse_pl_shot_description(description)
+                        if shot_info:
+                            event.update(shot_info)
+                    elif event_type == 'BLOCK':
+                        block_info = self._parse_pl_block_description(description)
+                        if block_info:
+                            event.update(block_info)
+                    elif event_type == 'FAC':
+                        faceoff_info = self._parse_pl_faceoff_description(description)
+                        if faceoff_info:
+                            event.update(faceoff_info)
+                    
+                    events.append(event)
+        
+        except Exception as e:
+            self.logger.error(f"Error extracting PL events: {e}")
+        
+        return events
+    
+    def _parse_pl_goal_description(self, description: str) -> Optional[Dict[str, Any]]:
+        """Parse PL goal description to extract scorer and assists."""
+        try:
+            # Split by newlines to separate scorer and assists
+            lines = description.split('\n')
+            scorer_line = lines[0].strip()
+            
+            # Extract team from scorer line (e.g., "NJD #11 NOESEN(1)")
+            team_match = re.match(r'^([A-Z]{3})\s+#(\d+)\s+([^(]+)', scorer_line)
+            if not team_match:
+                return None
+                
+            team = team_match.group(1)
+            scorer_sweater = int(team_match.group(2))
+            scorer_name = team_match.group(3).strip()
+            
+            goal_info = {
+                'team': team,
+                'scorer_name': scorer_name,
+                'scorer_sweater': scorer_sweater
+            }
+            
+            # Look for assists in subsequent lines
+            for line in lines[1:]:
+                line = line.strip()
+                if line.startswith('Assist:'):
+                    # Parse assist line (e.g., "Assist: #8 KOVACEVIC(1)")
+                    assist_match = re.match(r'Assist:\s*#(\d+)\s+([^(]+)', line)
+                    if assist_match:
+                        if 'assist1_name' not in goal_info:
+                            goal_info['assist1_name'] = assist_match.group(2).strip()
+                            goal_info['assist1_sweater'] = int(assist_match.group(1))
+                        else:
+                            goal_info['assist2_name'] = assist_match.group(2).strip()
+                            goal_info['assist2_sweater'] = int(assist_match.group(1))
+            
+            return goal_info
+            
+        except Exception as e:
+            self.logger.error(f"Error parsing PL goal description '{description}': {e}")
+            return None
+    
+    def _parse_pl_penalty_description(self, description: str) -> Optional[Dict[str, Any]]:
+        """Parse PL penalty description to extract penalty details."""
+        try:
+            # Format: "NJD #56 HAULA Slashing(2 min), Neu. Zone Drawn By: BUF #72 THOMPSON"
+            penalty_match = re.match(r'^([A-Z]{3})\s+#(\d+)\s+([^(]+)\s*\((\d+)\s*min\)', description)
+            if penalty_match:
+                team = penalty_match.group(1)
+                player_sweater = int(penalty_match.group(2))
+                penalty_type = penalty_match.group(3).strip()
+                duration = int(penalty_match.group(4))
+                
+                penalty_info = {
+                    'team': team,
+                    'player_sweater': player_sweater,
+                    'penalty_type': penalty_type,
+                    'duration': duration
+                }
+                
+                # Look for drawn by information
+                drawn_by_match = re.search(r'Drawn By:\s*([A-Z]{3})\s+#(\d+)', description)
+                if drawn_by_match:
+                    penalty_info['drawn_by_team'] = drawn_by_match.group(1)
+                    penalty_info['drawn_by_sweater'] = int(drawn_by_match.group(2))
+                
+                return penalty_info
+        except Exception as e:
+            self.logger.error(f"Error parsing PL penalty description '{description}': {e}")
+        return None
+    
+    def _parse_pl_hit_description(self, description: str) -> Optional[Dict[str, Any]]:
+        """Parse PL hit description to extract hit details."""
+        try:
+            # Format: "BUF #29 MALENSTYN HIT NJD #90 TATAR, Def. Zone"
+            hit_match = re.match(r'^([A-Z]{3})\s+#(\d+)\s+([^,]+)\s+HIT\s+([A-Z]{3})\s+#(\d+)\s+([^,]+)', description)
+            if hit_match:
+                hitter_team = hit_match.group(1)
+                hitter_sweater = int(hit_match.group(2))
+                hitter_name = hit_match.group(3).strip()
+                hittee_team = hit_match.group(4)
+                hittee_sweater = int(hit_match.group(5))
+                hittee_name = hit_match.group(6).strip()
+                
+                return {
+                    'hitter_team': hitter_team,
+                    'hitter_sweater': hitter_sweater,
+                    'hitter_name': hitter_name,
+                    'hittee_team': hittee_team,
+                    'hittee_sweater': hittee_sweater,
+                    'hittee_name': hittee_name
+                }
+        except Exception as e:
+            self.logger.error(f"Error parsing PL hit description '{description}': {e}")
+        return None
+    
+    def _parse_pl_shot_description(self, description: str) -> Optional[Dict[str, Any]]:
+        """Parse PL shot description to extract shot details."""
+        try:
+            # Format: "NJD #11 NOESEN, Snap , Off. Zone, 21 ft."
+            shot_match = re.match(r'^([A-Z]{3})\s+#(\d+)\s+([^,]+),\s*([^,]+),\s*([^,]+),\s*(\d+)\s*ft\.', description)
+            if shot_match:
+                team = shot_match.group(1)
+                player_sweater = int(shot_match.group(2))
+                player_name = shot_match.group(3).strip()
+                shot_type = shot_match.group(4).strip()
+                zone = shot_match.group(5).strip()
+                distance = int(shot_match.group(6))
+                
+                return {
+                    'team': team,
+                    'player_sweater': player_sweater,
+                    'player_name': player_name,
+                    'shot_type': shot_type,
+                    'zone': zone,
+                    'distance': distance
+                }
+        except Exception as e:
+            self.logger.error(f"Error parsing PL shot description '{description}': {e}")
+        return None
+    
+    def _parse_pl_block_description(self, description: str) -> Optional[Dict[str, Any]]:
+        """Parse PL block description to extract block details."""
+        try:
+            # Format: "NJD #63 BRATT OPPONENT-BLOCKED BY BUF #4 BYRAM, Slap, Def. Zone"
+            block_match = re.match(r'^([A-Z]{3})\s+#(\d+)\s+([^,]+)\s+OPPONENT-BLOCKED BY\s+([A-Z]{3})\s+#(\d+)\s+([^,]+)', description)
+            if block_match:
+                shooter_team = block_match.group(1)
+                shooter_sweater = int(block_match.group(2))
+                shooter_name = block_match.group(3).strip()
+                blocker_team = block_match.group(4)
+                blocker_sweater = int(block_match.group(5))
+                blocker_name = block_match.group(6).strip()
+                
+                return {
+                    'shooter_team': shooter_team,
+                    'shooter_sweater': shooter_sweater,
+                    'shooter_name': shooter_name,
+                    'blocker_team': blocker_team,
+                    'blocker_sweater': blocker_sweater,
+                    'blocker_name': blocker_name
+                }
+        except Exception as e:
+            self.logger.error(f"Error parsing PL block description '{description}': {e}")
+        return None
+    
+    def _parse_pl_faceoff_description(self, description: str) -> Optional[Dict[str, Any]]:
+        """Parse PL faceoff description to extract faceoff details."""
+        try:
+            # Format: "BUF #24 COZENS vs NJD #13 HISCHIER, Neu. Zone"
+            faceoff_match = re.match(r'^([A-Z]{3})\s+#(\d+)\s+([^,]+)\s+vs\s+([A-Z]{3})\s+#(\d+)\s+([^,]+)', description)
+            if faceoff_match:
+                home_team = faceoff_match.group(1)
+                home_sweater = int(faceoff_match.group(2))
+                home_name = faceoff_match.group(3).strip()
+                away_team = faceoff_match.group(4)
+                away_sweater = int(faceoff_match.group(5))
+                away_name = faceoff_match.group(6).strip()
+                
+                return {
+                    'home_team': home_team,
+                    'home_sweater': home_sweater,
+                    'home_name': home_name,
+                    'away_team': away_team,
+                    'away_sweater': away_sweater,
+                    'away_name': away_name
+                }
+        except Exception as e:
+            self.logger.error(f"Error parsing PL faceoff description '{description}': {e}")
+        return None
+    
+    def _split_data(self, combined_component: str) -> Tuple[str, str]:
+        """Split combined sweater/position text like '25C' into ('25', 'C')."""
+        match = re.match(r'(\d+)([A-Za-z]+)', combined_component)
+        if match:
+            numeric_part = match.group(1)
+            text_part = match.group(2)
+        else:
+            numeric_part = ''
+            text_part = ''
+        return numeric_part, text_part
+    
+    def _check_copyright(self, text: str) -> bool:
+        """Check if text contains copyright notice (like process_shifts)."""
+        if "©" not in text or "Copyright" not in text:
+            return False
+        
+        # Check if the year is in the expected range
+        for yr in ["2018", "2019", "2020", "2021", "2022", "2023", "2024", "2025"]:
+            if yr in text:
+                return True
+        return False
+    
+    def _extract_pl_line_data(self, row, player_mappings: Dict[int, Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Extract line data (linemates) for a PL event using process_shifts-inspired logic."""
+        try:
+            # Extract player information from all cells in the row
+            line_data = {
+                'home_line': [],
+                'away_line': []
+            }
+            
+            cells = row.find_all('td')
+            if not cells or len(cells) < 6:  # Ensure minimum required cells like process_shifts
+                return None
+            
+            # Check for copyright text (skip processing like process_shifts)
+            row_text = row.get_text(strip=True)
+            if self._check_copyright(row_text):
+                return None
+            
+            # Determine event type from the row cells (index 4 typically contains type)
+            event_type_text = ''
+            if len(cells) > 4:
+                event_type_text = cells[4].get_text(strip=True).upper()
+            
+            # Handle special event types that should have empty player lists (like process_shifts)
+            if event_type_text in ['PSTR', 'PGEND', 'GEND', 'ANTHEM']:
+                return line_data
+            
+            # Dynamic player count detection inspired by process_shifts
+            all_players: List[Dict[str, Any]] = []
+            
+            # Find all font elements with player data in this row
+            for cell in cells:
+                fonts = cell.find_all('font', style=re.compile(r'cursor:hand'))
+                for font in fonts:
+                    player_info = self._extract_player_info_from_font(font, player_mappings)
+                    if player_info:
+                        # Deduplicate by player_id + sweater
+                        exists = any(
+                            p.get('player_id') == player_info.get('player_id') and 
+                            p.get('sweater_number') == player_info.get('sweater_number')
+                            for p in all_players
+                        )
+                        if not exists:
+                            all_players.append(player_info)
+            
+            if not all_players:
+                return line_data  # Return empty line_data instead of None (like process_shifts)
+            
+            # Dynamic player count detection using process_shifts approach
+            try:
+                # Try to use table counting approach from process_shifts
+                away_players_count = 0
+                home_players_count = 0
+                away_table_idx = None
+                home_table_idx = None
+                
+                # Find cells with nested tables (indicates player blocks)
+                for idx, cell in enumerate(cells):
+                    tables = cell.find_all('table')
+                    if tables and len(tables) > 1:  # Subtract 1 like process_shifts
+                        table_count = len(tables) - 1
+                        if away_table_idx is None and table_count > 0:
+                            away_table_idx = idx
+                            away_players_count = table_count
+                        elif home_table_idx is None and table_count > 0 and idx != away_table_idx:
+                            home_table_idx = idx
+                            home_players_count = table_count
+                
+                # Extract away players using dynamic positioning (like process_shifts)
+                away_players = []
+                if away_table_idx is not None and away_players_count > 0:
+                    away_player_indices = [away_table_idx + 1 + (4 * x) for x in range(0, away_players_count)]
+                    for idx in away_player_indices:
+                        if idx < len(cells):
+                            # Try multiple extraction methods
+                            player_info = self._extract_player_from_cell_robust(cells[idx], player_mappings)
+                            if player_info and player_info not in away_players:
+                                away_players.append(player_info)
+                
+                # Extract home players using dynamic positioning
+                home_players = []
+                if home_table_idx is not None and home_players_count > 0:
+                    home_player_indices = [home_table_idx + 1 + (4 * x) for x in range(0, home_players_count)]
+                    for idx in home_player_indices:
+                        if idx < len(cells):
+                            player_info = self._extract_player_from_cell_robust(cells[idx], player_mappings)
+                            if player_info and player_info not in home_players:
+                                home_players.append(player_info)
+                
+                # If we got players via dynamic detection, use them
+                if away_players or home_players:
+                    line_data['away_line'] = away_players
+                    line_data['home_line'] = home_players
+                    return line_data
+                    
+            except Exception as e:
+                self.logger.debug(f"Dynamic player detection failed, falling back: {e}")
+            
+            # Fallback: use all collected players and split by team (with error resilience)
+            try:
+                # Group by team using boxscore mapping (like process_shifts logic)
+                team_to_players: Dict[str, List[Dict[str, Any]]] = {}
+                for player in all_players:
+                    team_abbrev = player.get('team') or 'UNK'
+                    team_to_players.setdefault(team_abbrev, []).append(player)
+
+                away_abbrev = getattr(self, '_last_loaded_teams', {}).get('away')
+                home_abbrev = getattr(self, '_last_loaded_teams', {}).get('home')
+
+                if away_abbrev and home_abbrev:
+                    line_data['away_line'] = team_to_players.get(away_abbrev, [])
+                    line_data['home_line'] = team_to_players.get(home_abbrev, [])
+                else:
+                    # Final fallback: split alphabetically if no team mapping
+                    teams_sorted = sorted(team_to_players.items(), key=lambda kv: kv[0])
+                    if len(teams_sorted) >= 2:
+                        line_data['away_line'] = teams_sorted[0][1]
+                        line_data['home_line'] = teams_sorted[1][1]
+                    elif len(teams_sorted) == 1:
+                        # Only one team found - might be incomplete due to penalties/empty net
+                        line_data['away_line'] = teams_sorted[0][1]
+                        line_data['home_line'] = []
+                    else:
+                        # No recognizable teams - put all players in away (error recovery)
+                        line_data['away_line'] = all_players
+                        line_data['home_line'] = []
+                
+                return line_data  # Always return something, even if empty (like process_shifts)
+                
+            except Exception as e:
+                self.logger.error(f"Error in fallback player grouping: {e}")
+                # Ultimate fallback: return empty line data
+                return line_data
+
+            
+        except Exception as e:
+            self.logger.error(f"Error extracting PL line data: {e}")
+            # Return empty line data instead of None for error resilience
+            return {'home_line': [], 'away_line': []}
+    
+    def _extract_player_from_cell_robust(self, cell, player_mappings: Dict[int, Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Robust player extraction from cell using multiple methods (inspired by process_shifts)."""
+        try:
+            # Method 1: Try font with cursor:hand style (current approach)
+            font = cell.find('font', style=re.compile(r'cursor:hand'))
+            if font:
+                player_info = self._extract_player_info_from_font(font, player_mappings)
+                if player_info:
+                    return player_info
+            
+            # Method 2: Try any font with title attribute
+            fonts = cell.find_all('font', title=True)
+            for font in fonts:
+                player_info = self._extract_player_info_from_font(font, player_mappings)
+                if player_info:
+                    return player_info
+            
+            # Method 3: Try parsing cell text directly (like process_shifts split_data approach)
+            cell_text = cell.get_text(strip=True)
+            if cell_text and re.match(r'\d+[A-Za-z]+', cell_text):
+                sweater, position = self._split_data(cell_text)
+                if sweater:
+                    # Try to find player name from title or other attributes
+                    all_fonts = cell.find_all('font')
+                    for font in all_fonts:
+                        title = font.get('title', '')
+                        if title and '-' in title:
+                            parts = title.split('-', 1)
+                            if len(parts) == 2:
+                                player_name = parts[1].strip()
+                                player_id = self._get_player_id_from_sweater(int(sweater), player_name, player_mappings)
+                                team_abbrev = None
+                                if player_id and player_id in player_mappings:
+                                    team_abbrev = player_mappings[player_id].get('team')
+                                return {
+                                    'player_id': player_id,
+                                    'player_name': player_name,
+                                    'sweater_number': int(sweater),
+                                    'position': position,
+                                    'team': team_abbrev
+                                }
+            
+            return None
+            
+        except Exception as e:
+            self.logger.debug(f"Error in robust cell extraction: {e}")
+            return None
+
+    def _extract_player_info_from_font(self, font, player_mappings: Dict[int, Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Extract player information from a font element in PL line data."""
+        try:
+            title = font.get('title', '')
+            if not title:
+                return None
+            title_match = re.match(r'^([^-]+)\s*-\s*(.+)$', title)
+            if not title_match:
+                return None
+            position = title_match.group(1).strip()
+            player_name = title_match.group(2).strip()
+            sweater_text = font.get_text(strip=True)
+            sweater_number = int(sweater_text) if sweater_text.isdigit() else None
+            if not sweater_number:
+                return None
+            player_id = self._get_player_id_from_sweater(sweater_number, player_name, player_mappings)
+            team_abbrev = None
+            if player_id and player_id in player_mappings:
+                team_abbrev = player_mappings[player_id].get('team')
+            return {
+                'player_id': player_id,
+                'player_name': player_name,
+                'sweater_number': sweater_number,
+                'position': position,
+                'team': team_abbrev
+            }
+        except Exception as e:
+            self.logger.error(f"Error extracting player info from font: {e}")
+            return None
+    
+    def _extract_player_info_from_table(self, table, player_mappings: Dict[int, Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Extract player information from a player table in PL line data."""
+        try:
+            # Find the player font element with title attribute
+            player_font = table.find('font', style=re.compile(r'cursor:hand'))
+            if not player_font:
+                return None
+            
+            # Extract player name and position from title
+            title = player_font.get('title', '')
+            if not title:
+                return None
+            
+            # Parse title format: "Position - PLAYER NAME"
+            title_match = re.match(r'^([^-]+)\s*-\s*(.+)$', title)
+            if not title_match:
+                return None
+            
+            position = title_match.group(1).strip()
+            player_name = title_match.group(2).strip()
+            
+            # Extract sweater number from font text
+            sweater_text = player_font.get_text(strip=True)
+            sweater_number = int(sweater_text) if sweater_text.isdigit() else None
+            
+            if not sweater_number:
+                return None
+            
+            # Get player ID from sweater number using player mappings
+            player_id = self._get_player_id_from_sweater(sweater_number, player_name, player_mappings)
+            
+            return {
+                'player_id': player_id,
+                'player_name': player_name,
+                'sweater_number': sweater_number,
+                'position': position
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error extracting player info from table: {e}")
+            return None
+    
+    def _get_player_id_from_sweater(self, sweater_number: int, player_name: str, player_mappings: Dict[int, Dict[str, Any]]) -> Optional[int]:
+        """Get player ID from sweater number and name using player mappings."""
+        try:
+            # Search through player mappings to find matching sweater number and name
+            for player_id, player_data in player_mappings.items():
+                if (player_data.get('sweaterNumber') == sweater_number and 
+                    player_data.get('name', '').upper() == player_name.upper()):
+                    return player_id
+            
+            # If no exact match, try just sweater number
+            for player_id, player_data in player_mappings.items():
+                if player_data.get('sweaterNumber') == sweater_number:
+                    return player_id
+            
+            return None
+        except Exception as e:
+            self.logger.error(f"Error getting player ID for sweater {sweater_number}: {e}")
+            return None
+    
+    def _load_player_mappings(self, game_id: str) -> Dict[int, Dict[str, Any]]:
+        """Load player ID to name/sweater mappings from boxscore data."""
+        try:
+            from pathlib import Path
+            boxscore_file = Path(self.config.storage_root) / '20242025' / 'json' / 'boxscores' / f'{game_id}.json'
+            if not boxscore_file.exists():
+                return {}
+            
+            import json
+            with open(boxscore_file, 'r') as f:
+                boxscore_data = json.load(f)
+            
+            player_mappings = {}
+            
+            # Extract from playerByGameStats
+            player_stats = boxscore_data.get('playerByGameStats', {})
+            
+            # Get team abbreviations
+            away_team_abbrev = boxscore_data.get('awayTeam', {}).get('abbrev', '')
+            home_team_abbrev = boxscore_data.get('homeTeam', {}).get('abbrev', '')
+            # Store for downstream usage in line grouping
+            try:
+                self._last_loaded_teams = {
+                    'away': away_team_abbrev,
+                    'home': home_team_abbrev
+                }
+            except Exception:
+                pass
+            
+            # Extract from away team
+            away_team = player_stats.get('awayTeam', {})
+            for position_group in ['forwards', 'defense', 'goalies']:
+                for player in away_team.get(position_group, []):
+                    player_id = player.get('playerId')
+                    if player_id:
+                        player_mappings[player_id] = {
+                            'name': player.get('name', {}).get('default', ''),
+                            'sweaterNumber': player.get('sweaterNumber', 0),
+                            'team': away_team_abbrev
+                        }
+            
+            # Extract from home team
+            home_team = player_stats.get('homeTeam', {})
+            for position_group in ['forwards', 'defense', 'goalies']:
+                for player in home_team.get(position_group, []):
+                    player_id = player.get('playerId')
+                    if player_id:
+                        player_mappings[player_id] = {
+                            'name': player.get('name', {}).get('default', ''),
+                            'sweaterNumber': player.get('sweaterNumber', 0),
+                            'team': home_team_abbrev
+                        }
+            
+            return player_mappings
+            
+        except Exception as e:
+            self.logger.error(f"Error loading player mappings for game {game_id}: {e}")
+            return {}
+    
+    def _extract_game_id_from_pl_file(self, html_file: Path) -> str:
+        """Extract game ID from PL file path (e.g., PL020001.HTM -> 2024020001)."""
+        try:
+            filename = html_file.name
+            # Extract the 6-digit game ID from filename (e.g., PL020001.HTM -> 020001)
+            match = re.search(r'PL(\d{6})\.HTM', filename)
+            if match:
+                short_id = match.group(1)
+                # Convert to full game ID (020001 -> 2024020001)
+                return f"2024{short_id}"
+            return None
+        except Exception as e:
+            self.logger.error(f"Error extracting game ID from file {html_file}: {e}")
+            return None

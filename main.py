@@ -698,6 +698,19 @@ class NHLDataRetrievalSystem:
                     json.dump(es_data, f, indent=2)
                 game_result['reports_processed'] += 1
 
+            # Parse the PL report (Play-by-Play)
+            pl_file = html_dir / 'PL' / f'PL{game_id}.HTM'
+            if pl_file.exists():
+                pl_data = local_parser.parse_report_data(pl_file, 'PL')
+                
+                # Save curated PL JSON under json/curate/pl
+                pl_out_dir = Path(self.config.storage_root) / season / 'json' / 'curate' / 'pl'
+                pl_out_dir.mkdir(parents=True, exist_ok=True)
+                pl_out_file = pl_out_dir / f'pl_{game_id}.json'
+                with open(pl_out_file, 'w') as f:
+                    json.dump(pl_data, f, indent=2)
+                game_result['reports_processed'] += 1
+
             # Parse the RO report (Roster)
             ro_file = html_dir / 'RO' / f'RO{game_id}.HTM'
             if ro_file.exists():

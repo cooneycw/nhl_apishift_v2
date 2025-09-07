@@ -88,6 +88,10 @@ class TeamReconciliationResult:
     es_discrepancy: int
     gs_reconciliation_status: str
     es_reconciliation_status: str
+    # New PL fields
+    html_pl_goals: int = 0
+    pl_discrepancy: int = 0
+    pl_reconciliation_status: str = 'perfect'
     # Keep backward compatibility fields
     authoritative_total_goals: int = 0
     html_total_goals: int = 0
@@ -128,9 +132,11 @@ class PlayerTeamGoalReconciliation:
         # Reverse mapping for team abbreviations to IDs
         self.team_abbrev_to_id = {v: k for k, v in self.team_id_mappings.items()}
     
-    def reconcile_all_games(self) -> Dict[str, Any]:
+    def reconcile_all_games(self, verbose: bool = False, output_file: str = None) -> Dict[str, Any]:
         """Reconcile player and team goal data for all games."""
         logger.info("Starting comprehensive player and team goal reconciliation...")
+        self.verbose = verbose
+        self.output_file = output_file
         
         # Get all game IDs from boxscores directory
         boxscore_dir = self.storage_path / 'json' / 'boxscores'
@@ -164,6 +170,10 @@ class PlayerTeamGoalReconciliation:
                 
                 result = self.reconcile_game(game_id)
                 if result:
+                    # Display readable game result if verbose mode is enabled
+                    if self.verbose:
+                        self._display_game_result(result, i, total_games)
+                    
                     season_summary['reconciliation_results'].append(result)
                     reconciled_games += 1
                     season_summary['total_goals'] += result.total_goals
@@ -182,9 +192,11 @@ class PlayerTeamGoalReconciliation:
                     season_summary['critical_issues'].extend(result.critical_discrepancies)
                     
                 else:
+                    print(f"\n❌ Failed to process game {game_id}")
                     failed_games += 1
                     
             except Exception as e:
+                print(f"\n❌ Error processing game {game_id}: {e}")
                 logger.error(f"Failed to reconcile game {game_id}: {e}")
                 failed_games += 1
         
@@ -206,6 +218,77 @@ class PlayerTeamGoalReconciliation:
         logger.info(f"Overall reconciliation: {season_summary.get('overall_reconciliation_percentage', 0):.1f}%")
         
         return season_summary
+    
+    def _display_game_result(self, result: GameReconciliationResult, game_num: int, total_games: int) -> None:
+        """Display a readable game reconciliation result."""
+        # Clear the progress line
+        print(f"\r{' ' * 80}\r", end='', flush=True)
+        
+        # Build the output text
+        output_lines = []
+        
+        # Game header
+        output_lines.append(f"\nGame {game_num}/{total_games}: {result.game_id}")
+        output_lines.append(f"{result.game_date} | {result.home_team} vs {result.away_team}")
+        output_lines.append(f"Total Goals: {result.total_goals}")
+        
+        # Team reconciliation
+        output_lines.append(f"\nTeam Reconciliation:")
+        output_lines.append(f"Sources: Play-by-Play JSON (Auth) | Game Summary HTML (GS) | Event Summary HTML (ES) | Play-by-Play HTML (PL)")
+        for team_abbrev, team_data in result.team_results.items():
+            # Only show warning icon if there are actual discrepancies
+            has_discrepancy = (team_data.gs_discrepancy != 0 or team_data.es_discrepancy != 0 or team_data.pl_discrepancy != 0)
+            status_icon = "⚠️ " if has_discrepancy else ""
+            output_lines.append(f"  {status_icon}{team_abbrev}: {team_data.authoritative_goals} goals")
+            output_lines.append(f"    Auth: {team_data.authoritative_goals} | GS: {team_data.html_gs_goals} (Δ{team_data.gs_discrepancy}) | ES: {team_data.html_es_goals} (Δ{team_data.es_discrepancy}) | PL: {team_data.html_pl_goals} (Δ{team_data.pl_discrepancy})")
+        
+        # Player reconciliation summary
+        perfect_count = sum(1 for p in result.player_results if p.reconciliation_status == 'perfect')
+        minor_count = sum(1 for p in result.player_results if p.reconciliation_status == 'minor_discrepancy')
+        major_count = sum(1 for p in result.player_results if p.reconciliation_status == 'major_discrepancy')
+        
+        output_lines.append(f"\nPlayer Reconciliation: {len(result.player_results)} players")
+        output_lines.append(f"  Perfect: {perfect_count} | Minor: {minor_count} | Major: {major_count}")
+        
+        # Show any actual discrepancies (non-zero differences)
+        actual_discrepancies = [p for p in result.player_results if p.goal_discrepancy != 0 or p.assist_discrepancy != 0]
+        if actual_discrepancies:
+            output_lines.append(f"\n⚠️ Actual Discrepancies Found:")
+            for player in actual_discrepancies[:3]:  # Show first 3
+                output_lines.append(f"  {player.player_name} #{player.sweater_number} ({player.team}):")
+                output_lines.append(f"    Goals: Auth={player.authoritative_goals}, HTML={player.html_goals} (Δ{player.goal_discrepancy})")
+                output_lines.append(f"    Assists: Auth={player.authoritative_assists}, HTML={player.html_assists} (Δ{player.assist_discrepancy})")
+            if len(actual_discrepancies) > 3:
+                output_lines.append(f"  ... and {len(actual_discrepancies) - 3} more")
+        else:
+            output_lines.append(f"  All player data matches perfectly!")
+        
+        # Show detailed player breakdown for quality assessment
+        output_lines.append(f"\nDetailed Player Breakdown:")
+        output_lines.append(f"Primary Comparison: Play-by-Play JSON vs Game Summary HTML (Status based on GS match)")
+        for player in result.player_results:
+            # Only show error icon if there are actual discrepancies
+            has_discrepancy = (player.goal_discrepancy != 0 or player.assist_discrepancy != 0)
+            status_icon = "⚠️ " if has_discrepancy else ""
+            output_lines.append(f"  {status_icon}{player.player_name} #{player.sweater_number} ({player.team}):")
+            output_lines.append(f"    Goals: Auth={player.authoritative_goals}, HTML={player.html_goals} (Δ{player.goal_discrepancy})")
+            output_lines.append(f"    Assists: Auth={player.authoritative_assists}, HTML={player.html_assists} (Δ{player.assist_discrepancy})")
+            output_lines.append(f"    Status: {player.reconciliation_status}")
+        
+        # Overall status
+        overall_status = "Perfect" if result.overall_reconciliation_percentage == 100.0 else f"⚠️ {result.overall_reconciliation_percentage:.1f}%"
+        output_lines.append(f"\nOverall Status: {overall_status}")
+        output_lines.append("-" * 60)
+        
+        # Display to console
+        for line in output_lines:
+            print(line)
+        
+        # Write to file if verbose mode and output file specified
+        if self.verbose and hasattr(self, 'output_file') and self.output_file:
+            with open(self.output_file, 'a', encoding='utf-8') as f:
+                for line in output_lines:
+                    f.write(line + '\n')
     
     def reconcile_game(self, game_id: str) -> Optional[GameReconciliationResult]:
         """Reconcile player and team goal data for a specific game."""
@@ -493,11 +576,17 @@ class PlayerTeamGoalReconciliation:
         # Load player mappings to get player IDs from sweater numbers
         player_mappings = self._load_player_mappings(game_id)
         
-        # Find all goal events (rows with class="goal")
-        goal_rows = soup.find_all('tr', class_=re.compile(r'.*goal.*'))
+        # Find all goal events (td elements with class containing "goal")
+        goal_cells = soup.find_all('td', class_=re.compile(r'.*goal.*'))
         
-        for row in goal_rows:
-            cells = row.find_all('td')
+        # Group goal cells by their parent row
+        goal_rows = {}
+        for cell in goal_cells:
+            row = cell.find_parent('tr')
+            if row and row not in goal_rows:
+                goal_rows[row] = row.find_all('td')
+        
+        for row, cells in goal_rows.items():
             if len(cells) >= 6:  # Ensure we have enough cells for goal data
                 # Extract goal information
                 event_number = cells[0].get_text(strip=True)
@@ -838,7 +927,7 @@ class PlayerTeamGoalReconciliation:
                 html_total_goals=gs_goals,
                 goal_count_discrepancy=gs_discrepancy,
                 player_discrepancies=[],
-                reconciliation_status=gs_status
+                reconciliation_status=overall_status
             )
         
         return team_results
@@ -1026,10 +1115,13 @@ class PlayerTeamGoalReconciliation:
             es_discrepancy = auth_goals - es_goals
             pl_discrepancy = auth_goals - pl_goals
             
-            # Determine reconciliation status
+            # Determine reconciliation status - primary based on GS, ES/PL for additional validation
             gs_status = 'perfect' if gs_discrepancy == 0 else 'minor_discrepancy' if abs(gs_discrepancy) <= 1 else 'major_discrepancy'
             es_status = 'perfect' if es_discrepancy == 0 else 'minor_discrepancy' if abs(es_discrepancy) <= 1 else 'major_discrepancy'
             pl_status = 'perfect' if pl_discrepancy == 0 else 'minor_discrepancy' if abs(pl_discrepancy) <= 1 else 'major_discrepancy'
+            
+            # Overall status based on GS (primary source)
+            overall_status = gs_status
             
             team_results[team] = TeamReconciliationResult(
                 team_id=self.team_abbrev_to_id.get(team, 0),
@@ -1037,16 +1129,19 @@ class PlayerTeamGoalReconciliation:
                 authoritative_goals=auth_goals,
                 html_gs_goals=gs_goals,
                 html_es_goals=es_goals,
+                html_pl_goals=pl_goals,
                 gs_discrepancy=gs_discrepancy,
                 es_discrepancy=es_discrepancy,
+                pl_discrepancy=pl_discrepancy,
                 gs_reconciliation_status=gs_status,
                 es_reconciliation_status=es_status,
+                pl_reconciliation_status=pl_status,
                 # Backward compatibility fields
                 authoritative_total_goals=auth_goals,
                 html_total_goals=gs_goals,
                 goal_count_discrepancy=gs_discrepancy,
                 player_discrepancies=[],
-                reconciliation_status=gs_status
+                reconciliation_status=overall_status
             )
         
         return team_results
@@ -1214,9 +1309,11 @@ class PlayerTeamGoalReconciliation:
             es_total_discrepancy = abs(es_goal_discrepancy) + abs(es_assist_discrepancy)
             pl_total_discrepancy = abs(pl_goal_discrepancy) + abs(pl_assist_discrepancy)
             
-            if gs_total_discrepancy == 0 and es_total_discrepancy == 0 and pl_total_discrepancy == 0:
+            # Primary reconciliation is based on GS (Game Summary) - the most reliable HTML source
+            # ES and PL are used for additional validation but don't override GS results
+            if gs_total_discrepancy == 0:
                 status = 'perfect'
-            elif gs_total_discrepancy <= 1 and es_total_discrepancy <= 1 and pl_total_discrepancy <= 1:
+            elif gs_total_discrepancy <= 1:
                 status = 'minor_discrepancy'
             else:
                 status = 'major_discrepancy'
@@ -1527,6 +1624,7 @@ def main():
     parser.add_argument('--team-analysis', action='store_true', help='Focus on team-level analysis')
     parser.add_argument('--storage-path', default='storage/20242025', help='Storage path')
     parser.add_argument('--output', help='Output file for results')
+    parser.add_argument('--verbose', action='store_true', help='Show detailed game-by-game output during processing')
     
     args = parser.parse_args()
     
@@ -1534,9 +1632,16 @@ def main():
     
     if args.game_id:
         # Reconcile specific game
+        system.verbose = args.verbose
+        system.output_file = args.output
         result = system.reconcile_game(args.game_id)
         if result:
-            print(system.generate_detailed_report(result))
+            if args.verbose:
+                # Show new readable format
+                system._display_game_result(result, 1, 1)
+            else:
+                # Show detailed report format
+                print(system.generate_detailed_report(result))
             
             # Save individual game report
             if args.output:
@@ -1548,7 +1653,7 @@ def main():
     
     elif args.all_games:
         # Reconcile all games
-        season_summary = system.reconcile_all_games()
+        season_summary = system.reconcile_all_games(verbose=args.verbose, output_file=args.output)
         system.save_reconciliation_results(season_summary, args.output)
         
         print(f"Reconciliation complete: {season_summary['reconciled_games']}/{season_summary['total_games']} games")
