@@ -27,7 +27,7 @@ import sys
 
 # Import reference data loader
 sys.path.append(str(Path(__file__).parent.parent))
-from utils.reference_data import ReferenceDataLoader
+from src.validate.reference_data import ReferenceDataLoader
 
 
 class HTMLReportParser:
@@ -4263,9 +4263,18 @@ class HTMLReportParser:
         return scoring
     
     def _extract_goal_from_row(self, cells) -> Dict[str, Any]:
-        """Extract goal data from a table row."""
+        """Extract goal data from a table row with exception handling."""
         try:
             if len(cells) < 8:
+                return None
+            
+            # Check for exception codes that should not be counted as goals
+            assist1_text = cells[6].get_text(strip=True) if len(cells) > 6 else ''
+            assist2_text = cells[7].get_text(strip=True) if len(cells) > 7 else ''
+            
+            # Check if this is an exception code (not a legitimate goal)
+            if not self._is_legitimate_goal(assist1_text, assist2_text):
+                self.logger.debug(f"Excluding exception code from goal count: {assist1_text} | {assist2_text}")
                 return None
             
             # Convert goal number and period to integers
@@ -4281,10 +4290,7 @@ class HTMLReportParser:
             scorer_info = self._parse_player_info(scorer_text)
             
             # Extract assist info
-            assist1_text = cells[6].get_text(strip=True) if len(cells) > 6 else ''
             assist1_info = self._parse_player_info(assist1_text) if assist1_text else None
-            
-            assist2_text = cells[7].get_text(strip=True) if len(cells) > 7 else ''
             assist2_info = self._parse_player_info(assist2_text) if assist2_text else None
             
             # Parse players on ice (format: "1,4,9,19,25,72")
@@ -4312,6 +4318,54 @@ class HTMLReportParser:
             self.logger.debug(f"Error extracting goal from row: {e}")
             return None
     
+    def _is_legitimate_goal(self, assist1_text: str, assist2_text: str) -> bool:
+        """
+        Determine if a goal entry is legitimate (should be counted) or an exception code.
+        
+        Args:
+            assist1_text: Text from assist1 column
+            assist2_text: Text from assist2 column
+            
+        Returns:
+            True if this is a legitimate goal, False if it's an exception code
+        """
+        # Combine both assist columns for checking
+        combined_text = f"{assist1_text} {assist2_text}".strip()
+        
+        # Exception codes that should NOT be counted as goals
+        exception_codes = [
+            "Unsuccessful Penalty Shot",
+            "No Goal",
+            "Missed",
+            "Failed",
+            "Penalty Shot",
+            "PS"
+        ]
+        
+        # Check if any exception code is present
+        for exception in exception_codes:
+            if exception.lower() in combined_text.lower():
+                return False
+        
+        # Legitimate goals (these should be counted)
+        legitimate_indicators = [
+            "unassisted",  # Goals with no assists
+            "EMPTY NET",   # Empty net goals
+            # Player names/numbers (legitimate assists)
+        ]
+        
+        # If it contains legitimate indicators or player info, it's likely a real goal
+        for indicator in legitimate_indicators:
+            if indicator.lower() in combined_text.lower():
+                return True
+        
+        # If it's empty or contains player-like patterns, assume it's legitimate
+        if not combined_text or re.match(r'^[\d\s,\.A-Z]+$', combined_text):
+            return True
+        
+        # Default to legitimate (conservative approach)
+        return True
+
     def _parse_player_info(self, player_text: str) -> Dict[str, Any]:
         """Parse player information from text like '72 T.THOMPSON(34)'."""
         try:

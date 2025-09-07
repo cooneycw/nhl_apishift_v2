@@ -1,7 +1,7 @@
 ================================================================================
 NHL PLAYER/TEAM GOAL RECONCILIATION - SEASON SUMMARY
 ================================================================================
-Generated: 2025-09-06 18:40:37
+Generated: 2025-09-07 11:07:53
 Season: 2024-2025
 
 EXECUTIVE SUMMARY
@@ -21,7 +21,7 @@ Major Discrepancies: 0
 
 CRITICAL ISSUES SUMMARY
 ----------------------------------------
-major_team_discrepancy: 142 occurrences
+major_team_discrepancy: 79 occurrences
 
 RECOMMENDATIONS
 ----------------------------------------

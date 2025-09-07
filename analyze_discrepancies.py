@@ -6,7 +6,7 @@ Analyze goal reconciliation discrepancies to find the missing cases for 100% rec
 import json
 import sys
 from pathlib import Path
-from src.curate.player_team_goal_reconciliation import PlayerTeamGoalReconciliation
+from src.validate.player_team_goal_reconciliation import PlayerTeamGoalReconciliation
 
 def analyze_discrepancies():
     """Analyze discrepancies from the reconciliation results."""

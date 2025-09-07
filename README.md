@@ -155,13 +155,25 @@ python main.py --mode status --seasons 20242025
 ### Curate Outputs (HTML → JSON)
 
 When running `step_03_curate`, parsed outputs are written to season-scoped folders:
-- Full parsed game data:
-  - `storage/{season}/csv/curate/html_data_{gameId}.json`
-- Penalty-specific extract for reconciliation:
-  - `storage/{season}/json/parsed_penalties/penalties_{gameId}.json`
 
+#### Curated HTML Report JSON Files
+- **Game Summary (GS)**: `storage/{season}/json/curate/gs/gs_{gameNumber}.json`
+- **Event Summary (ES)**: `storage/{season}/json/curate/es/es_{gameNumber}.json`
+- **Play-by-Play (PL)**: `storage/{season}/json/curate/pl/pl_{gameNumber}.json`
+- **Roster (RO)**: `storage/{season}/json/curate/ro/ro_{gameNumber}.json`
+- **Faceoff Summary (FS)**: `storage/{season}/json/curate/fs/fs_{gameNumber}.json`
+- **Time on Ice Home (TH)**: `storage/{season}/json/curate/th/th_{gameNumber}.json`
+- **Time on Ice Away (TV)**: `storage/{season}/json/curate/tv/tv_{gameNumber}.json`
+
+#### Legacy Curated Files
+- **Full parsed game data**: `storage/{season}/csv/curate/html_data_{gameId}.json`
+- **Penalty-specific extract**: `storage/{season}/json/parsed_penalties/penalties_{gameId}.json`
+
+#### Input HTML Reports
 Curate reads HTM reports from:
-- `storage/{season}/html/reports/{type}/{TYPE}{gameId}.HTM` (e.g., `GS`, `PL`, `ES`, `FS`, `FC`, `RO`, `SS`, `TV`, `TH`)
+- `storage/{season}/html/reports/{type}/{TYPE}{gameNumber}.HTM` (e.g., `GS020001.HTM`, `PL020001.HTM`)
+
+**Note**: HTML reports use a 6-digit game number (e.g., `020001`) derived from the last 6 digits of the full 10-digit game ID (e.g., `2024020001`).
 
 ### Data Reconciliation
 
@@ -179,13 +191,22 @@ The system includes comprehensive data reconciliation capabilities:
 - **Complex Scenarios**: Handles simultaneous penalties, team penalties, non-power play situations
 - **Comprehensive Reporting**: Detailed discrepancy analysis and quality metrics
 
+#### Reconciliation Output Files
+- **Individual Game Reports**: `storage/{season}/json/curate/reconciliation/reconciliation_{timestamp}/game_{gameId}_reconciliation.txt`
+- **Comprehensive Summary**: `storage/{season}/json/curate/reconciliation/reconciliation_{timestamp}/comprehensive_summary.txt`
+- **Directory Structure**: Each reconciliation run creates a timestamped subdirectory for organized storage
+- **User Consumption**: All reports are in human-readable text format (no JSON output)
+
 #### Usage Examples
 ```bash
 # Run goal reconciliation for specific game
-python src/curate/player_team_goal_reconciliation.py --game-id 2024020001
+python src/validate/player_team_goal_reconciliation.py --game-id 2024020001
 
 # Run comprehensive goal reconciliation for all games
-python src/curate/player_team_goal_reconciliation.py --all-games
+python src/validate/player_team_goal_reconciliation.py --all-games
+
+# Run reconciliation via main.py (integrated with step_04_validate)
+python main.py --mode step --steps step_03_curate step_04_validate --seasons 20242025
 
 # Run penalty data analysis
 python src/curate/penalty_data_analysis.py --game-id 2024020001
@@ -207,7 +228,6 @@ nhl_apishift_v2/
 │   │   ├── shift_charts_collector.py # Shift charts collection
 │   │   └── data_collector.py  # Core data collection logic
 │   ├── curate/                # Data processing and curation
-│   │   ├── player_team_goal_reconciliation.py # Goal data reconciliation
 │   │   ├── penalty_data_analysis.py # Penalty data analysis
 │   │   ├── goal_reconciliation_system.py # Comprehensive goal reconciliation
 │   │   └── reconciliation/    # Reconciliation utilities
@@ -216,10 +236,12 @@ nhl_apishift_v2/
 │   ├── model/                 # Data models and schemas
 │   │   └── shift_charts.py    # Shift charts data models
 │   ├── transform/             # Data transformation utilities
+│   ├── validate/              # Data validation and reconciliation
+│   │   ├── player_team_goal_reconciliation.py # Goal data reconciliation
+│   │   ├── validator.py       # Data validation
+│   │   └── reference_data.py  # Reference data loading
 │   └── utils/                 # Common utilities
-│       ├── storage.py         # Storage management
-│       ├── validator.py       # Data validation
-│       └── reference_data.py  # Reference data loading
+│       └── storage.py         # Storage management
 ├── storage/                   # Data storage directory (season-first structure)
 │   ├── 20242025/              # 2024-2025 season data (13,123 files)
 │   │   ├── json/              # Raw JSON data from APIs (2,627+ files)
@@ -241,25 +263,30 @@ nhl_apishift_v2/
 │   │   │   ├── SC/            # Shift Charts (1,312 files)
 │   │   │   ├── TV/            # Time on Ice Away (0 files - ready for collection)
 │   │   │   └── TH/            # Time on Ice Home (0 files - ready for collection)
-│   │   └── csv/curate/        # Curated data extraction targets (empty - ready for processing)
-│   │       ├── game_summaries/     # Target for GS report extraction
-│   │       ├── event_summaries/    # Target for ES report extraction
-│   │       ├── play_by_play/       # Target for PL report extraction
-│   │       ├── faceoff_summary/    # Target for FS report extraction
-│   │       ├── faceoff_comparison/ # Target for FC report extraction
-│   │       ├── rosters/            # Target for RO report extraction
-│   │       ├── shot_summary/       # Target for SS report extraction
-│   │       ├── time_on_ice_away/   # Target for TV report extraction
-│   │       ├── time_on_ice_home/   # Target for TH report extraction
-│   │       └── shift_charts/       # Target for shift charts JSON processing
+│   │   ├── json/curate/       # Curated HTML report JSON files
+│   │   │   ├── gs/            # Game Summary JSON files (gs_{gameNumber}.json)
+│   │   │   ├── es/            # Event Summary JSON files (es_{gameNumber}.json)
+│   │   │   ├── pl/            # Play-by-Play JSON files (pl_{gameNumber}.json)
+│   │   │   ├── ro/            # Roster JSON files (ro_{gameNumber}.json)
+│   │   │   ├── fs/            # Faceoff Summary JSON files (fs_{gameNumber}.json)
+│   │   │   ├── th/            # Time on Ice Home JSON files (th_{gameNumber}.json)
+│   │   │   ├── tv/            # Time on Ice Away JSON files (tv_{gameNumber}.json)
+│   │   │   └── reconciliation/ # Goal reconciliation reports (user consumption)
+│   │   │       └── reconciliation_{timestamp}/ # Timestamped reconciliation runs
+│   │   │           ├── game_{gameId}_reconciliation.txt # Individual game reports
+│   │   │           └── comprehensive_summary.txt # Overall summary report
+│   │   └── csv/curate/        # Legacy curated data files
+│   │       └── html_data_{gameId}.json # Full parsed game data
 │   ├── 20232024/              # 2023-2024 season data (when collected)
 │   ├── 20252026/              # 2025-2026 season data (when collected)
 │   ├── global/                # Cross-season data
 │   │   ├── seasons.json       # Historical seasons list
 │   │   └── logs/              # Application logs
 │   └── processed/             # Cross-season processed data
-├── nhl_api_datastructure.mdc  # Comprehensive API documentation
-├── project_specifications.mdc # Technical specifications
+├── docs/                      # Documentation
+│   ├── nhl_api_datastructure.mdc  # Comprehensive API documentation
+│   ├── project_specifications.mdc # Technical specifications
+│   └── reconciliation_output_analysis.md # Reconciliation analysis
 └── README.md                  # This file
 ```
 
@@ -436,8 +463,9 @@ mypy src/
 
 ## 📚 Documentation
 
-- **[API Documentation](nhl_api_datastructure.mdc)**: Comprehensive NHL API reference
-- **[Project Specifications](project_specifications.mdc)**: Technical specifications and requirements
+- **[API Documentation](docs/nhl_api_datastructure.mdc)**: Comprehensive NHL API reference
+- **[Project Specifications](docs/project_specifications.mdc)**: Technical specifications and requirements
+- **[Reconciliation Analysis](docs/reconciliation_output_analysis.md)**: Detailed reconciliation output analysis
 - **[Configuration Guide](config/)**: Configuration options and examples
 
 ## 🤝 Contributing
@@ -478,7 +506,7 @@ mypy src/
 
 #### Getting Help
 - Check the logs in `storage/logs/`
-- Review the [API Documentation](nhl_api_datastructure.mdc)
+- Review the [API Documentation](docs/nhl_api_datastructure.mdc)
 - Open an issue for bugs or feature requests
 
 ## 📄 License

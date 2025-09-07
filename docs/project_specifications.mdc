@@ -83,6 +83,12 @@ RATE_LIMIT_SETTINGS = {
 - **Complex Scenarios**: Handles simultaneous penalties, team penalties, non-power play situations
 - **Comprehensive Reporting**: Detailed discrepancy analysis and quality metrics
 
+#### Reconciliation Output Files
+- **Goal Reconciliation Results**: `goal_reconciliation_results_{timestamp}.json`
+- **Player/Team Reconciliation Results**: `player_team_goal_reconciliation_{timestamp}.json`
+- **Reconciliation Analysis**: `reconciliation_analysis_{gameId}.json`
+- **Reconciliation Reports**: `*_report.txt` (text summaries)
+
 ### Data Storage Strategy
 
 #### Storage Format Priority
@@ -112,7 +118,15 @@ storage/
 │   │   ├── SS/          # Shot Summary reports
 │   │   ├── TV/          # Time on Ice Away reports
 │   │   └── TH/          # Time on Ice Home reports
-│   └── csv/curate/      # Curated data for processing
+│   ├── json/curate/     # Curated HTML report JSON files
+│   │   ├── gs/          # Game Summary JSON files (gs_{gameNumber}.json)
+│   │   ├── es/          # Event Summary JSON files (es_{gameNumber}.json)
+│   │   ├── pl/          # Play-by-Play JSON files (pl_{gameNumber}.json)
+│   │   ├── ro/          # Roster JSON files (ro_{gameNumber}.json)
+│   │   ├── fs/          # Faceoff Summary JSON files (fs_{gameNumber}.json)
+│   │   ├── th/          # Time on Ice Home JSON files (th_{gameNumber}.json)
+│   │   └── tv/          # Time on Ice Away JSON files (tv_{gameNumber}.json)
+│   └── csv/curate/      # Legacy curated data files
 │       └── html_data_{gameId}.json # Full parsed game data
 ├── global/              # Cross-season data
 │   ├── seasons.json     # Historical seasons list

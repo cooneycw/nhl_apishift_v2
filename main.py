@@ -40,7 +40,8 @@ from src.collect.collect_json import NHLJSONCollector
 from src.collect.data_collector import DataCollector
 from src.collect.html_collector import HTMLReportCollector
 from src.utils.storage import CSVStorageManager
-from src.utils.validator import DataValidator
+from src.validate.validator import DataValidator
+from src.validate.player_team_goal_reconciliation import PlayerTeamGoalReconciliation
 
 
 class NHLDataRetrievalSystem:
@@ -307,6 +308,19 @@ class NHLDataRetrievalSystem:
                             break
                 
                 if not json_data_exists:
+                    return False
+            elif dep == 'step_03_curate':
+                # Check if curated data files exist for the current seasons
+                curated_data_exists = False
+                for season in self.current_seasons:
+                    curate_dir = Path(self.config.storage_root) / season / "json" / "curate"
+                    if curate_dir.exists():
+                        # Check for curated HTML report directories that indicate step_03 was completed
+                        if (curate_dir / "gs").exists() and (curate_dir / "es").exists() and (curate_dir / "pl").exists():
+                            curated_data_exists = True
+                            break
+                
+                if not curated_data_exists:
                     return False
             else:
                 # For other dependencies, require session completion
@@ -1028,13 +1042,14 @@ class NHLDataRetrievalSystem:
         Returns:
             Dictionary containing validation results
         """
-        self.logger.info("Step 4: Validating data integrity and quality...")
+        self.logger.info("Step 4: Validating data integrity and quality with reconciliation...")
         
         results = {
             'validation_passed': True,
             'seasons_validated': [],
             'total_errors': 0,
-            'total_warnings': 0
+            'total_warnings': 0,
+            'reconciliation_results': {}
         }
         
         try:
@@ -1046,7 +1061,8 @@ class NHLDataRetrievalSystem:
                     'validation_passed': True,
                     'errors': [],
                     'warnings': [],
-                    'data_quality_score': 0.0
+                    'data_quality_score': 0.0,
+                    'reconciliation_summary': {}
                 }
                 
                 try:
@@ -1066,6 +1082,11 @@ class NHLDataRetrievalSystem:
                     results['total_errors'] += len(season_results['errors'])
                     results['total_warnings'] += len(season_results['warnings'])
                     
+                    # Run comprehensive reconciliation
+                    reconciliation_results = self._run_comprehensive_reconciliation(season)
+                    season_results['reconciliation_summary'] = reconciliation_results
+                    results['reconciliation_results'][season] = reconciliation_results
+                    
                 except Exception as e:
                     error_msg = f"Validation failed for season {season}: {e}"
                     season_results['errors'].append(error_msg)
@@ -1082,6 +1103,42 @@ class NHLDataRetrievalSystem:
             raise
             
         return results
+    
+    def _run_comprehensive_reconciliation(self, season: str) -> Dict[str, Any]:
+        """
+        Run comprehensive goal reconciliation for a season with detailed reporting.
+        
+        Args:
+            season: Season identifier
+            
+        Returns:
+            Dictionary containing reconciliation results
+        """
+        self.logger.info(f"Starting comprehensive reconciliation for season {season}")
+        
+        try:
+            # Initialize reconciliation system
+            storage_path = f"storage/{season}"
+            reconciliation_system = PlayerTeamGoalReconciliation(storage_path)
+            
+            # Run reconciliation with enhanced reporting
+            reconciliation_results = reconciliation_system.reconcile_all_games_enhanced(
+                verbose=False, 
+                output_file=f"reconciliation_{season}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            )
+            
+            self.logger.info(f"Reconciliation completed for season {season}: {reconciliation_results.get('overall_reconciliation', 0):.1f}%")
+            
+            return reconciliation_results
+            
+        except Exception as e:
+            self.logger.error(f"Error running reconciliation for season {season}: {e}")
+            return {
+                'error': str(e),
+                'overall_reconciliation': 0.0,
+                'total_games': 0,
+                'failed_games': 0
+            }
     
     def step_05_transform(self, seasons: List[str], full_update: bool = False) -> Dict[str, Any]:
         """

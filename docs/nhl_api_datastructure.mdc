@@ -68,16 +68,15 @@ nhl_apishift_v2/
 │   │   │   ├── SS/            # Shot Summary reports
 │   │   │   ├── TV/            # Time on Ice Away reports
 │   │   │   └── TH/            # Time on Ice Home reports
-│   │   └── csv/curate/        # Curated data for processing
-│   │       ├── game_summaries/     # Extracted from GS reports
-│   │       ├── event_summaries/    # Extracted from ES reports
-│   │       ├── play_by_play/       # Extracted from PL reports
-│   │       ├── faceoff_summary/    # Extracted from FS reports
-│   │       ├── faceoff_comparison/ # Extracted from FC reports
-│   │       ├── rosters/            # Extracted from RO reports
-│   │       ├── shot_summary/       # Extracted from SS reports
-│   │       ├── time_on_ice_away/   # Extracted from TV reports
-│   │       ├── time_on_ice_home/   # Extracted from TH reports
+│   │   ├── json/curate/       # Curated HTML report JSON files
+│   │   │   ├── gs/            # Game Summary JSON files (gs_{gameNumber}.json)
+│   │   │   ├── es/            # Event Summary JSON files (es_{gameNumber}.json)
+│   │   │   ├── pl/            # Play-by-Play JSON files (pl_{gameNumber}.json)
+│   │   │   ├── ro/            # Roster JSON files (ro_{gameNumber}.json)
+│   │   │   ├── fs/            # Faceoff Summary JSON files (fs_{gameNumber}.json)
+│   │   │   ├── th/            # Time on Ice Home JSON files (th_{gameNumber}.json)
+│   │   │   └── tv/            # Time on Ice Away JSON files (tv_{gameNumber}.json)
+│   │   └── csv/curate/        # Legacy curated data files
 │   │       └── html_data_{gameId}.json # Full parsed game data
 │   ├── global/                # Cross-season data
 │   │   ├── seasons.json       # Historical seasons list

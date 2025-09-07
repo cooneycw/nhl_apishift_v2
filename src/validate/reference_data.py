@@ -73,19 +73,39 @@ class ReferenceDataLoader:
             with open(teams_file, 'r', encoding='utf-8') as f:
                 data = json.load(f)
             
-            # Extract team info from standings data
-            if 'standings' in data:
-                for team_data in data['standings']:
-                    team_id = team_data.get('teamId')
-                    if team_id:
-                        team_info = TeamInfo(
-                            id=team_id,
-                            name=team_data.get('teamName', {}).get('default', ''),
-                            abbrev=team_data.get('teamAbbrev', {}).get('default', ''),
-                            common_name=team_data.get('teamCommonName', {}).get('default', ''),
-                            place_name=team_data.get('teamPlaceName', {}).get('default', '')
-                        )
-                        self.teams[team_id] = team_info
+            # Handle both standings format and direct array format
+            teams_data = []
+            if isinstance(data, dict) and 'standings' in data:
+                # Standings format (expected by original code)
+                teams_data = data['standings']
+            elif isinstance(data, list):
+                # Direct array format (actual current format)
+                teams_data = data
+            
+            for team_data in teams_data:
+                # Handle both numeric teamId and string id formats
+                team_id = team_data.get('teamId') or team_data.get('id')
+                if team_id:
+                    # Convert string ID to numeric if needed, or use hash for string IDs
+                    if isinstance(team_id, str):
+                        # For string IDs like "UTA", "WPG", use a hash or create numeric mapping
+                        numeric_id = hash(team_id) % 1000000  # Convert to reasonable numeric range
+                    else:
+                        numeric_id = team_id
+                    
+                    team_info = TeamInfo(
+                        id=numeric_id,
+                        name=team_data.get('teamName', {}).get('default', '') if isinstance(team_data.get('teamName'), dict) else team_data.get('name', ''),
+                        abbrev=team_data.get('teamAbbrev', {}).get('default', '') if isinstance(team_data.get('teamAbbrev'), dict) else team_data.get('abbrev', ''),
+                        common_name=team_data.get('teamCommonName', {}).get('default', '') if isinstance(team_data.get('teamCommonName'), dict) else team_data.get('commonName', ''),
+                        place_name=team_data.get('teamPlaceName', {}).get('default', '') if isinstance(team_data.get('teamPlaceName'), dict) else team_data.get('placeName', '')
+                    )
+                    self.teams[numeric_id] = team_info
+                    
+                    # Also create abbreviation lookup for easier access
+                    abbrev = team_info.abbrev
+                    if abbrev and abbrev not in self.teams:
+                        self.teams[abbrev] = team_info
                         
         except Exception as e:
             logger.error(f"Error loading teams: {e}")
@@ -128,6 +148,18 @@ class ReferenceDataLoader:
                     
         except Exception as e:
             logger.error(f"Error loading boxscores: {e}")
+    
+    def get_team_by_abbrev(self, abbrev: str) -> Optional[TeamInfo]:
+        """Get team information by abbreviation."""
+        return self.teams.get(abbrev)
+    
+    def get_team_by_id(self, team_id: int) -> Optional[TeamInfo]:
+        """Get team information by ID."""
+        return self.teams.get(team_id)
+    
+    def get_all_team_abbrevs(self) -> List[str]:
+        """Get all team abbreviations."""
+        return [team.abbrev for team in self.teams.values() if isinstance(team, TeamInfo)]
     
     def _extract_players_from_boxscore(self, boxscore_data: Dict):
         """Extract player information from boxscore data."""
