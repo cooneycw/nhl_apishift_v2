@@ -27,22 +27,33 @@ nhl_apishift_v2/
 │   │   ├── html_collector.py  # HTML report collector
 │   │   ├── collect_json.py    # Step 1: JSON data collection
 │   │   ├── collect_html.py    # Step 2: HTML report collection
+│   │   ├── shift_charts_collector.py # Shift charts collection
 │   │   └── collector.py       # Enhanced data collector
 │   ├── curate/                # Data curation and processing
-│   │   └── __init__.py
+│   │   ├── __init__.py
+│   │   ├── player_team_goal_reconciliation.py # Goal data reconciliation
+│   │   ├── penalty_data_analysis.py # Penalty data analysis
+│   │   ├── goal_reconciliation_system.py # Comprehensive goal reconciliation
+│   │   └── reconciliation/    # Reconciliation utilities
+│   ├── parse/                 # Data parsing modules
+│   │   └── html_report_parser.py # HTML report parsing
 │   ├── model/                 # Data models and schemas
-│   │   └── __init__.py
+│   │   ├── __init__.py
+│   │   └── shift_charts.py    # Shift charts data models
 │   ├── transform/             # Data transformation modules
 │   │   └── __init__.py
 │   └── utils/                 # Utility modules
 │       ├── __init__.py
 │       ├── storage.py         # CSV storage management
-│       └── validator.py       # Data validation utilities
+│       ├── validator.py       # Data validation utilities
+│       └── reference_data.py  # Reference data loading
 ├── storage/                   # Data storage directory (season-first structure)
 │   ├── {season}/              # Season-specific data (e.g., 20242025)
 │   │   ├── json/              # Raw JSON data from APIs
 │   │   │   ├── boxscores/     # Game boxscore data
-│   │   │   ├── playbyplay/    # Play-by-play data
+│   │   │   ├── gamecenter_landing/ # Game overview and summary data
+│   │   │   ├── playbyplay/    # Play-by-play data (authoritative for goal data)
+│   │   │   ├── shiftcharts/   # Shift charts data
 │   │   │   ├── games.json     # Season schedule data
 │   │   │   ├── players.json   # Season player information
 │   │   │   └── teams.json     # Season team data (season-specific)
@@ -57,7 +68,7 @@ nhl_apishift_v2/
 │   │   │   ├── SS/            # Shot Summary reports
 │   │   │   ├── TV/            # Time on Ice Away reports
 │   │   │   └── TH/            # Time on Ice Home reports
-│   │   └── csv/curate/        # Curated data for processing (empty - ready for HTM extraction)
+│   │   └── csv/curate/        # Curated data for processing
 │   │       ├── game_summaries/     # Extracted from GS reports
 │   │       ├── event_summaries/    # Extracted from ES reports
 │   │       ├── play_by_play/       # Extracted from PL reports
@@ -66,7 +77,8 @@ nhl_apishift_v2/
 │   │       ├── rosters/            # Extracted from RO reports
 │   │       ├── shot_summary/       # Extracted from SS reports
 │   │       ├── time_on_ice_away/   # Extracted from TV reports
-│   │       └── time_on_ice_home/   # Extracted from TH reports
+│   │       ├── time_on_ice_home/   # Extracted from TH reports
+│   │       └── html_data_{gameId}.json # Full parsed game data
 │   ├── global/                # Cross-season data
 │   │   ├── seasons.json       # Historical seasons list
 │   │   └── logs/              # Application logs
@@ -102,6 +114,19 @@ python main.py --mode step --steps step_01_collect_json step_02_collect_html --s
 ```bash
 python -m src.collect.collect_json --seasons 20242025 --verbose
 python -m src.collect.collect_html --seasons 20242025 --verbose
+```
+
+### Run data reconciliation:
+```bash
+# Goal data reconciliation
+python src/curate/player_team_goal_reconciliation.py --game-id 2024020001
+python src/curate/player_team_goal_reconciliation.py --all-games
+
+# Penalty data analysis
+python src/curate/penalty_data_analysis.py --game-id 2024020001
+
+# Comprehensive goal reconciliation
+python src/curate/goal_reconciliation_system.py --game-id 2024020001
 ```
 
 # Original NHL API Data Structure Documentation

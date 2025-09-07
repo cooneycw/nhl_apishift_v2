@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-The NHL Data Retrieval System is a Python-based application designed to responsibly collect, process, and store **regular season** NHL statistical data from official NHL API endpoints and supplementary HTML reports. The system emphasizes API safety, data integrity, modular architecture, and **exclusive focus on regular season games only**.
+The NHL Data Retrieval System is a Python-based application designed to responsibly collect, process, and store **regular season** NHL statistical data from official NHL API endpoints and supplementary HTML reports. The system emphasizes API safety, data integrity, modular architecture, comprehensive data reconciliation, and **exclusive focus on regular season games only**.
 
 **IMPORTANT: This system is configured to collect ONLY regular season games (gameType == 2). Preseason games (gameType == 1) and playoff games (gameType == 3) are automatically filtered out during collection.**
 
@@ -17,6 +17,7 @@ The NHL Data Retrieval System is a Python-based application designed to responsi
   - `beautifulsoup4` >= 4.11.0 for HTML parsing
   - `pandas` >= 1.5.0 for data manipulation
   - `lxml` >= 4.9.0 for XML/HTML parsing
+  - `pydantic` >= 2.0.0 for data validation and models
   - Standard library: `json`, `csv`, `logging`, `concurrent.futures`, `datetime`, `pathlib`
 
 **Development Environment**:
@@ -67,6 +68,21 @@ RATE_LIMIT_SETTINGS = {
 - **HTML Reports**: Limited collection of publicly available HTML reports
 - **No Authentication Bypass**: Respect any authentication requirements
 
+### Data Reconciliation Strategy
+
+#### Goal Data Reconciliation
+- **Authoritative Source**: Play-by-Play JSON (Event Type 505) for goal data
+- **Cross-Validation**: Compares goal data across JSON and HTML sources
+- **Player-Level Analysis**: Individual player goal and assist reconciliation
+- **Team-Level Analysis**: Team goal totals and distribution validation
+- **Shootout Handling**: Automatic exclusion of shootout goals from statistics
+
+#### Penalty Data Reconciliation
+- **Primary Source**: Gamecenter Landing JSON for penalty data
+- **HTML Parsing**: BeautifulSoup-based extraction from HTML reports
+- **Complex Scenarios**: Handles simultaneous penalties, team penalties, non-power play situations
+- **Comprehensive Reporting**: Detailed discrepancy analysis and quality metrics
+
 ### Data Storage Strategy
 
 #### Storage Format Priority
@@ -77,19 +93,31 @@ RATE_LIMIT_SETTINGS = {
 #### Directory Structure
 ```
 storage/
-├── json/                 # Raw JSON data from APIs
-│   ├── seasons.json     # Season information
-│   ├── teams.json       # Team data
-│   ├── games/           # Game data by season
-│   ├── boxscores/       # Boxscore data by season/game
-│   ├── playbyplay/      # Play-by-play data by season/game
-│   └── players/         # Player information by season
-├── html/                # HTML reports (when applicable)
-│   └── reports/         # Game reports by season/type
-├── csv/                 # Exported CSV files
-│   └── [season]/        # Season-specific exports
-├── processed/           # Curated/processed data
-└── logs/               # Application logs
+├── {season}/            # Season-specific data (e.g., 20242025)
+│   ├── json/            # Raw JSON data from APIs
+│   │   ├── boxscores/   # Game boxscore data
+│   │   ├── gamecenter_landing/ # Game overview and summary data
+│   │   ├── playbyplay/  # Play-by-play data (authoritative for goal data)
+│   │   ├── shiftcharts/ # Shift charts data
+│   │   ├── games.json   # Season schedule data
+│   │   ├── players.json # Season player information
+│   │   └── teams.json   # Season team data
+│   ├── html/reports/    # HTML reports (HTM files)
+│   │   ├── GS/          # Game Summary reports
+│   │   ├── ES/          # Event Summary reports
+│   │   ├── PL/          # Play-by-Play reports
+│   │   ├── FS/          # Faceoff Summary reports
+│   │   ├── FC/          # Faceoff Comparison reports
+│   │   ├── RO/          # Roster reports
+│   │   ├── SS/          # Shot Summary reports
+│   │   ├── TV/          # Time on Ice Away reports
+│   │   └── TH/          # Time on Ice Home reports
+│   └── csv/curate/      # Curated data for processing
+│       └── html_data_{gameId}.json # Full parsed game data
+├── global/              # Cross-season data
+│   ├── seasons.json     # Historical seasons list
+│   └── logs/            # Application logs
+└── processed/           # Cross-season processed data
 ```
 
 #### Data Retention Policy

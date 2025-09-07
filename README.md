@@ -10,6 +10,7 @@ The NHL API Data Retrieval System provides a complete pipeline for extracting ho
 
 - **Regular Season Focus**: Collects only regular season games (gameType == 2)
 - **Comprehensive Data Coverage**: JSON APIs, HTML reports, and shift charts
+- **Data Reconciliation**: Advanced goal and penalty data reconciliation across sources
 - **Rate Limiting**: Conservative API usage with built-in rate limiting
 - **Error Handling**: Robust retry logic and error recovery
 - **Modular Architecture**: Step-based processing pipeline
@@ -22,9 +23,10 @@ The NHL API Data Retrieval System provides a complete pipeline for extracting ho
 - **Base URL**: `https://api-web.nhle.com`
 - **Boxscores**: Detailed game statistics
 - **Gamecenter Landing**: Comprehensive game overview and summary data
-- **Play-by-Play**: Complete game events and shifts
+- **Play-by-Play**: Complete game events and shifts (authoritative for goal data)
 - **Team Data**: Rosters, standings, schedules
 - **Player Data**: Statistics and information
+- **Shift Charts**: Detailed player shift information and time on ice
 
 ### HTML Reports (Secondary)
 - **Base URL**: `https://www.nhl.com/scores/htmlreports/{season}/`
@@ -161,6 +163,34 @@ When running `step_03_curate`, parsed outputs are written to season-scoped folde
 Curate reads HTM reports from:
 - `storage/{season}/html/reports/{type}/{TYPE}{gameId}.HTM` (e.g., `GS`, `PL`, `ES`, `FS`, `FC`, `RO`, `SS`, `TV`, `TH`)
 
+### Data Reconciliation
+
+The system includes comprehensive data reconciliation capabilities:
+
+#### Goal Data Reconciliation
+- **Authoritative Source**: Play-by-Play JSON (Event Type 505) for goal data
+- **Cross-Validation**: Compares goal data across JSON and HTML sources
+- **Player-Level Analysis**: Individual player goal and assist reconciliation
+- **Team-Level Analysis**: Team goal totals and distribution validation
+
+#### Penalty Data Reconciliation  
+- **Primary Source**: Gamecenter Landing JSON for penalty data
+- **HTML Parsing**: BeautifulSoup-based extraction from HTML reports
+- **Complex Scenarios**: Handles simultaneous penalties, team penalties, non-power play situations
+- **Comprehensive Reporting**: Detailed discrepancy analysis and quality metrics
+
+#### Usage Examples
+```bash
+# Run goal reconciliation for specific game
+python src/curate/player_team_goal_reconciliation.py --game-id 2024020001
+
+# Run comprehensive goal reconciliation for all games
+python src/curate/player_team_goal_reconciliation.py --all-games
+
+# Run penalty data analysis
+python src/curate/penalty_data_analysis.py --game-id 2024020001
+```
+
 ## 📁 Project Structure
 
 ```
@@ -172,10 +202,24 @@ nhl_apishift_v2/
 │   └── config.py              # Enhanced configuration system
 ├── src/                       # Source code modules
 │   ├── collect/               # Data collection modules
+│   │   ├── collect_json.py    # JSON data collection
+│   │   ├── collect_html.py    # HTML report collection
+│   │   ├── shift_charts_collector.py # Shift charts collection
+│   │   └── data_collector.py  # Core data collection logic
 │   ├── curate/                # Data processing and curation
+│   │   ├── player_team_goal_reconciliation.py # Goal data reconciliation
+│   │   ├── penalty_data_analysis.py # Penalty data analysis
+│   │   ├── goal_reconciliation_system.py # Comprehensive goal reconciliation
+│   │   └── reconciliation/    # Reconciliation utilities
+│   ├── parse/                 # Data parsing modules
+│   │   └── html_report_parser.py # HTML report parsing
 │   ├── model/                 # Data models and schemas
+│   │   └── shift_charts.py    # Shift charts data models
 │   ├── transform/             # Data transformation utilities
 │   └── utils/                 # Common utilities
+│       ├── storage.py         # Storage management
+│       ├── validator.py       # Data validation
+│       └── reference_data.py  # Reference data loading
 ├── storage/                   # Data storage directory (season-first structure)
 │   ├── 20242025/              # 2024-2025 season data (13,123 files)
 │   │   ├── json/              # Raw JSON data from APIs (2,627+ files)
