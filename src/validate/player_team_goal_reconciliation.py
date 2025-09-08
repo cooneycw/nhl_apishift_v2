@@ -2275,9 +2275,9 @@ class PlayerTeamGoalReconciliation:
             
             # Calculate discrepancies by phase
             regulation_goal_discrepancy = auth_stats['regulation_goals'] - gs_stats['regulation_goals']
-            regulation_assist_discrepancy = auth_stats['regulation_assists'] - es_stats['regulation_assists']
+            regulation_assist_discrepancy = auth_stats['regulation_assists'] - gs_stats['regulation_assists']
             overtime_goal_discrepancy = auth_stats['overtime_goals'] - gs_stats['overtime_goals']
-            overtime_assist_discrepancy = auth_stats['overtime_assists'] - es_stats['overtime_assists']
+            overtime_assist_discrepancy = auth_stats['overtime_assists'] - gs_stats['overtime_assists']
             shootout_goal_discrepancy = auth_stats['shootout_goals'] - pl_stats['shootout_goals']
             
             # Determine overall reconciliation status
